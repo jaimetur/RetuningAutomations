@@ -2,9 +2,6 @@
 [![Commit activity](https://img.shields.io/github/commit-activity/y/jaimetur/RetuningAutomations?label=Commit%20activity)](https://github.com/jaimetur/RetuningAutomations/graphs/contributors)
 [![Resolved Github issues](https://img.shields.io/github/issues-closed/jaimetur/RetuningAutomations?label=Resolved%20issues)](https://github.com/jaimetur/RetuningAutomations/issues?q=is%3Aissue%20state%3Aclosed)
 [![Open Github issues](https://img.shields.io/github/issues/jaimetur/RetuningAutomations?label=Open%20Issues)](https://github.com/jaimetur/RetuningAutomations/issues)
-[![Total Github Releases downloads](https://img.shields.io/github/downloads/jaimetur/RetuningAutomations/total?label=Total%20downloads)](https://github.com/jaimetur/RetuningAutomations/releases)
-[![Latest version downloads](https://img.shields.io/github/downloads/jaimetur/RetuningAutomations/latest/total?label=Latest%20version%20downloads)](https://github.com/jaimetur/RetuningAutomations/releases/latest)
-[![Pre-release version downloads](https://img.shields.io/github/downloads/jaimetur/RetuningAutomations/v3.6.2/total?label=Pre%20version%20downloads)](https://github.com/jaimetur/RetuningAutomations/releases?q=%22alpha%22+OR+%22beta%22+OR+%22RC%22&expanded=true)
 
 ---
 # Retuning Automations Tool
