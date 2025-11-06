@@ -517,10 +517,6 @@ def compile(compiler='pyinstaller', compile_in_one_file=COMPILE_IN_ONE_FILE):
     Path(f"{TOOL_NAME}.spec").unlink(missing_ok=True)
     Path(f"nuitka-crash-report.xml").unlink(missing_ok=True)
     shutil.rmtree(build_path, ignore_errors=True)
-    try:
-        shutil.rmtree(exif_folder_tmp, ignore_errors=True)
-    except NameError:
-        pass
     if compile_in_one_file:
         shutil.rmtree(dist_path, ignore_errors=True)
     print("Temporary compilation files successfully deleted!")
