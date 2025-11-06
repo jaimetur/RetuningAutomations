@@ -42,7 +42,7 @@ Multi-Platform/Multi-Arch tool designed to Automate some process during SSB Retu
                                       )
 # ================================ DEFAULTS ================================= #
 # Input Folder
-# INPUT_FOLDER = r"c:\Users\ejaitur\OneDrive - Ericsson\SSB Retuning Project Sharepoint - Scripts\OutputStep0\Output\ToyCells\PA7"
+# INPUT_FOLDER = r"c:\Users\ejaitur\OneDrive - Ericsson\SSB Retuning Project Sharepoint - Scripts\OutputStep0\RetuneAutomations\ToyCells\PA7"
 INPUT_FOLDER = ""  # empty by default if not defined
 
 # Frequencyes
