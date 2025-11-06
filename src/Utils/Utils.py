@@ -90,3 +90,27 @@ def print_arguments_pretty(arguments, title="Arguments", step_name="", use_custo
                 print(f"{MSG_TAGS['INFO']}{step_name}{indent}{arg}")
                 i += 1
     print("")
+
+def zip_folder(temp_dir, output_file):
+    print(f"Creating packed file: {output_file}...")
+
+    # Convertir output_file a un objeto Path
+    output_path = Path(output_file)
+
+    # Crear los directorios padres si no existen
+    if not output_path.parent.exists():
+        print(f"Creating needed folder for: {output_path.parent}")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(output_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(temp_dir):
+            for file in files:
+                file_path = Path(root) / file
+                # Añade al zip respetando la estructura de carpetas
+                zipf.write(file_path, file_path.relative_to(temp_dir))
+            for dir in dirs:
+                dir_path = Path(root) / dir
+                # Añade directorios vacíos al zip
+                if not os.listdir(dir_path):
+                    zipf.write(dir_path, dir_path.relative_to(temp_dir))
+    print(f"File successfully packed: {output_file}")
