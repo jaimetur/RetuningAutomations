@@ -16,7 +16,7 @@ import glob
 from pathlib import Path
 
 from RetuningAutomations import TOOL_NAME, TOOL_VERSION, COPYRIGHT_TEXT
-from Utils.Utils import clear_screen, get_os, get_arch
+from src.Utils.Utils import clear_screen, get_os, get_arch, print_arguments_pretty
 
 global OPERATING_SYSTEM
 global ARCHITECTURE
@@ -312,7 +312,7 @@ def compile(compiler='pyinstaller', compile_in_one_file=COMPILE_IN_ONE_FILE):
             pyinstaller_command.extend(("--runtime-tmpdir", '/var/tmp'))
 
         # Now Run PyInstaller with previous settings
-        print_arguments_pretty(pyinstaller_command, title="Pyinstaller Arguments", use_logger=False, use_custom_print=False)
+        print_arguments_pretty(pyinstaller_command, title="Pyinstaller Arguments", use_custom_print=False)
 
         try:
             PyInstaller.__main__.run(pyinstaller_command)
@@ -386,7 +386,7 @@ def compile(compiler='pyinstaller', compile_in_one_file=COMPILE_IN_ONE_FILE):
             nuitka_command.extend([rf'--onefile-tempdir-spec=%TEMP%\{TOOL_NAME_WITH_VERSION_OS_ARCH}'])
 
         # Now Run Nuitka with previous settings
-        print_arguments_pretty(nuitka_command, title="Nuitka Arguments", use_logger=False, use_custom_print=False)
+        print_arguments_pretty(nuitka_command, title="Nuitka Arguments", use_custom_print=False)
         result = subprocess.run(nuitka_command)
         success = (result.returncode == 0)
         if not success:

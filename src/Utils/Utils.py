@@ -51,3 +51,42 @@ def get_arch(step_name=""):
         arch_label = "unknown"
     print(f"{MSG_TAGS['INFO']}{step_name}Detected architecture: {arch_label}")
     return arch_label
+
+def print_arguments_pretty(arguments, title="Arguments", step_name="", use_custom_print=True):
+    """
+    Prints a list of command-line arguments in a structured and readable one-line-per-arg format.
+
+    Args:
+        :param arguments:
+        :param step_name:
+        :param title:
+        :param use_custom_print:
+        :param use_logger:
+    """
+    print("")
+    indent = "    "
+    i = 0
+
+    if use_custom_print:
+        from Utils.StandaloneUtils import custom_print
+        custom_print(f"{title}:")
+        while i < len(arguments):
+            arg = arguments[i]
+            if arg.startswith('--') and i + 1 < len(arguments) and not arguments[i + 1].startswith('--'):
+                custom_print(f"{step_name}{indent}{arg}={arguments[i + 1]}")
+                i += 2
+            else:
+                custom_print(f"{step_name}{indent}{arg}")
+                i += 1
+    else:
+        pass
+        print(f"{MSG_TAGS['INFO']}{title}:")
+        while i < len(arguments):
+            arg = arguments[i]
+            if arg.startswith('--') and i + 1 < len(arguments) and not arguments[i + 1].startswith('--'):
+                print(f"{MSG_TAGS['INFO']}{step_name}{indent}{arg}={arguments[i + 1]}")
+                i += 2
+            else:
+                print(f"{MSG_TAGS['INFO']}{step_name}{indent}{arg}")
+                i += 1
+    print("")
