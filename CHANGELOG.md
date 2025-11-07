@@ -20,7 +20,7 @@
     - Updated documentation with latest changes
     
   - #### 🚀 Enhancements:
-    - Modules common helpers extracted from their classes and added to a new Python module called helpers.py for a better efficiency and maintainance.
+    - Modules common methods and helpers extracted from their classes and added to a new Python module called common.py for a better efficiency and maintainance.
 
 ---
 
