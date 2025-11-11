@@ -16,29 +16,40 @@ from src.modules.CommonMethods import (
     natural_logfile_key,
 )
 
+
 class ConfigurationAudit:
     """
     Generates an Excel in input_dir with one sheet per *.log / *.logs / *.txt file.
     (Funcionalidad intacta.)
     """
 
-    SUMMARY_RE = SUMMARY_RE  # mantener referencia de clase
+    SUMMARY_RE = SUMMARY_RE  # keep class reference
 
     def __init__(self):
         pass
 
+    # =====================================================================
+    #                            PUBLIC API
+    # =====================================================================
     def run(
-            self,
-            input_dir: str,
-            module_name: Optional[str] = "",
-            versioned_suffix: Optional[str] = None,
-            tables_order: Optional[List[str]] = None,  # <-- NEW optional parameter
+        self,
+        input_dir: str,
+        module_name: Optional[str] = "",
+        versioned_suffix: Optional[str] = None,
+        tables_order: Optional[List[str]] = None,      # optional sheet ordering
+        filter_frequencies: Optional[List[str]] = None # NEW: substrings to filter pivot columns
     ) -> str:
         """
         Main entry point: creates an Excel file with one sheet per detected table.
         Sheets are ordered according to TABLES_ORDER if provided; otherwise,
         they are sorted in a natural order by filename (Data_Collection.txt, Data_Collection(1).txt, ...).
+
+        If 'filter_frequencies' is provided, the three added summary sheets will keep only
+        those pivot *columns* whose header contains any of the provided substrings
+        (case-insensitive). 'NodeId' and 'Total' are always kept.
         """
+        # --- Normalize filters ---
+        freq_filters = [str(f).strip() for f in (filter_frequencies or []) if str(f).strip()]
 
         # --- Validate the input directory ---
         if not os.path.isdir(input_dir):
@@ -128,10 +139,9 @@ class ConfigurationAudit:
         # =====================================================================
         #                PHASE 2: Determine final sorting order
         # =====================================================================
-
         def entry_sort_key(entry: Dict[str, object]) -> Tuple[int, int, int]:
             """
-            Defines the final sorting key for Excel sheets:
+            Final sorting key for Excel sheets:
               - If TABLES_ORDER exists → sort by table order first, then by file (natural), then by table index
               - Otherwise → sort only by file (natural) and table index
             """
@@ -185,11 +195,79 @@ class ConfigurationAudit:
             })
 
         # =====================================================================
+        #        PHASE 4.1: Prepare pivot tables for extra summary sheets
+        # =====================================================================
+        # Collect dataframes for the specific MOs we need
+        mo_collectors: Dict[str, List[pd.DataFrame]] = {
+            "NRCellDU": [],
+            "NRFreqRelation": [],
+            "GUtranSyncSignalFrequency": [],
+        }
+        for entry in table_entries:
+            mo_name = str(entry.get("sheet_candidate", "")).strip()
+            if mo_name in mo_collectors:
+                df_mo = entry["df"]
+                if isinstance(df_mo, pd.DataFrame) and not df_mo.empty:
+                    mo_collectors[mo_name].append(df_mo)
+
+        # Concatenate per-MO dataframes (aligning columns if needed)
+        df_nr_celldu = self._concat_or_empty(mo_collectors["NRCellDU"])
+        df_nr_freqrel = self._concat_or_empty(mo_collectors["NRFreqRelation"])
+        df_gu_syncfreq = self._concat_or_empty(mo_collectors["GUtranSyncSignalFrequency"])
+
+        # ---- Build pivots ----
+        pivot_nr_cells = self._safe_pivot_count(
+            df=df_nr_celldu,
+            index_field="NodeId",
+            columns_field="ssbFrequency",
+            values_field="NRCellDUId",
+            add_margins=True,
+            margins_name="Total",
+        )
+        pivot_nr_cells = self._apply_frequency_column_filter(pivot_nr_cells, freq_filters)
+
+        pivot_freq_rel = self._safe_pivot_count(
+            df=df_nr_freqrel,
+            index_field="NodeId",
+            columns_field="NRFreqRelationId",
+            values_field="NRCellCUId",
+            add_margins=True,
+            margins_name="Total",
+        )
+        pivot_freq_rel = self._apply_frequency_column_filter(pivot_freq_rel, freq_filters)
+
+        # pivot_gu_syncfreq = self._safe_pivot_count(
+        #     df=df_gu_syncfreq,
+        #     index_field="NodeId",
+        #     columns_field="arfcn",
+        #     values_field="NodeId",
+        #     add_margins=True,
+        #     margins_name="Total",
+        # )
+
+        # After (robust path without 'values'):
+        pivot_gu_syncfreq = self._safe_crosstab_count(
+            df=df_gu_syncfreq,
+            index_field="NodeId",
+            columns_field="arfcn",
+            add_margins=True,
+            margins_name="Total",
+        )
+
+        pivot_gu_syncfreq = self._apply_frequency_column_filter(pivot_gu_syncfreq, freq_filters)
+
+        # =====================================================================
         #                PHASE 5: Write the Excel file
         # =====================================================================
         with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
             # Write Summary first
             pd.DataFrame(summary_rows).to_excel(writer, sheet_name="Summary", index=False)
+
+            # Extra summary sheets
+            pivot_nr_cells.to_excel(writer, sheet_name="Summary NR Cells", index=False)
+            pivot_freq_rel.to_excel(writer, sheet_name="Summary FreqRelation", index=False)
+            pivot_gu_syncfreq.to_excel(writer, sheet_name="Summary GUtranFreq", index=False)
+
             # Then write each table in the final determined order
             for entry in table_entries:
                 entry["df"].to_excel(writer, sheet_name=entry["final_sheet"], index=False)
@@ -197,7 +275,9 @@ class ConfigurationAudit:
         print(f"{module_name} Wrote Excel with {len(table_entries)} sheet(s) in: '{excel_path}'")
         return excel_path
 
-    # --------- discovery ---------
+    # =====================================================================
+    #                        PRIVATE HELPERS (I/O)
+    # =====================================================================
     def _find_log_files(self, folder: str) -> List[str]:
         files = []
         for name in os.listdir(folder):
@@ -209,11 +289,12 @@ class ConfigurationAudit:
         files.sort()
         return files
 
-    # --------- reading ---------
     def _read_text_file(self, path: str) -> Tuple[List[str], Optional[str]]:
         return read_text_with_encoding(path)
 
-    # --------- parsing (fallback single-table) ---------
+    # =====================================================================
+    #                        PRIVATE HELPERS (Parsing)
+    # =====================================================================
     def _parse_log_lines(self, lines: List[str], forced_header_idx: Optional[int] = None) -> Tuple[pd.DataFrame, str]:
         valid = [ln for ln in lines if ln.strip() and not self.SUMMARY_RE.match(ln)]
         header_idx = forced_header_idx
@@ -267,7 +348,6 @@ class ConfigurationAudit:
                 return i
         return None
 
-    # --------- header & MO helpers ---------
     @staticmethod
     def _find_subnetwork_header_index(lines: List[str]) -> Optional[int]:
         for i, ln in enumerate(lines):
@@ -288,7 +368,9 @@ class ConfigurationAudit:
         toks = prev.split()
         return toks[-1].strip() if toks else None
 
-    # --------- sheet naming ---------
+    # =====================================================================
+    #                        PRIVATE HELPERS (Sheets)
+    # =====================================================================
     @staticmethod
     def _sanitize_sheet_name(name: str) -> str:
         return sanitize_sheet_name(name)
@@ -297,7 +379,6 @@ class ConfigurationAudit:
     def _unique_sheet_name(base: str, used: set) -> str:
         return unique_sheet_name(base, used)
 
-    # --------- caps ---------
     @staticmethod
     def _cap_rows(df: pd.DataFrame, note: str, max_rows_excel: int = 1_048_576) -> Tuple[pd.DataFrame, str]:
         if len(df) > max_rows_excel:
@@ -305,7 +386,264 @@ class ConfigurationAudit:
             note = (note + " | " if note else "") + f"Trimmed to {max_rows_excel} rows"
         return df, note
 
-    # --------- multi-table helpers ---------
     @staticmethod
     def _find_all_subnetwork_headers(lines: List[str]) -> List[int]:
         return find_all_subnetwork_headers(lines)
+
+    # =====================================================================
+    #                     PRIVATE HELPERS (Pivots & Filters)
+    # =====================================================================
+    @staticmethod
+    def _concat_or_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
+        """Return a single concatenated DataFrame or an empty one if none; align on common cols if needed."""
+        if not dfs:
+            return pd.DataFrame()
+        try:
+            return pd.concat(dfs, ignore_index=True)
+        except Exception:
+            common_cols = set.intersection(*(set(d.columns) for d in dfs)) if dfs else set()
+            if not common_cols:
+                return pd.DataFrame()
+            dfs_aligned = [d[list(common_cols)].copy() for d in dfs]
+            return pd.concat(dfs_aligned, ignore_index=True)
+
+    def _safe_pivot_count(
+            self,
+            df: pd.DataFrame,
+            index_field: str,
+            columns_field: str,
+            values_field: str,
+            add_margins: bool = True,
+            margins_name: str = "Total",
+    ) -> pd.DataFrame:
+        """
+        Robust pivot builder that prevents 'Grouper for ... not 1-dimensional' errors.
+
+        Fixes cases where:
+          - multiple 'NodeId' columns exist (with spaces or suffixes)
+          - index name collides with column name
+          - MultiIndex columns appear (e.g., from 2-line headers)
+        """
+
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+            return pd.DataFrame({"Info": ["Table not found or empty"]})
+
+        # --- 1) Always flatten MultiIndex (columns and index) ---
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = ["_".join([str(c).strip() for c in tup if str(c).strip()]) for tup in df.columns]
+        if isinstance(df.index, pd.MultiIndex):
+            df = df.reset_index()
+
+        # --- 2) Reset index to avoid index/column name collisions ---
+        work = df.reset_index(drop=True).copy()
+
+        # --- 3) Normalize and deduplicate columns case-insensitively ---
+        work.columns = pd.Index([str(c).strip() for c in work.columns])
+        seen_lower = set()
+        unique_cols = []
+        for c in work.columns:
+            cl = c.lower()
+            if cl in seen_lower:
+                continue
+            seen_lower.add(cl)
+            unique_cols.append(c)
+        work = work[unique_cols]
+
+        # --- 4) Case-insensitive resolver (accepts suffixes like NodeId_1) ---
+        def _resolve(name: str) -> Optional[str]:
+            nl = name.lower()
+            for c in work.columns:
+                if c.lower() == nl or c.lower().startswith(nl + "_"):
+                    return c
+            return None
+
+        idx_col = _resolve(index_field)
+        col_col = _resolve(columns_field)
+        val_col = _resolve(values_field)
+
+        if not all([idx_col, col_col, val_col]):
+            missing = [n for n, v in [(index_field, idx_col), (columns_field, col_col), (values_field, val_col)] if v is None]
+            return pd.DataFrame({
+                "Info": [f"Required columns missing: {', '.join(missing)}"],
+                "PresentColumns": [", ".join(work.columns.tolist())],
+            })
+
+        # --- 5) Sanitize data ---
+        for col in {idx_col, col_col, val_col}:
+            work[col] = work[col].astype(str).str.strip()
+
+        try:
+            piv = pd.pivot_table(
+                work,
+                index=idx_col,
+                columns=col_col,
+                values=val_col,
+                aggfunc="count",
+                fill_value=0,
+                margins=add_margins,
+                margins_name=margins_name,
+            ).reset_index()
+
+            # Flatten again in case margins cause MultiIndex
+            if isinstance(piv.columns, pd.MultiIndex):
+                piv.columns = [" ".join([str(x) for x in tup if str(x)]).strip() for tup in piv.columns]
+
+            return piv
+
+        except Exception as ex:
+            return pd.DataFrame({
+                "Error": [f"Pivot build failed: {ex}"],
+                "PresentColumns": [", ".join(work.columns.tolist())],
+            })
+
+    def _safe_crosstab_count(
+            self,
+            df: pd.DataFrame,
+            index_field: str,
+            columns_field: str,
+            add_margins: bool = True,
+            margins_name: str = "Total",
+    ) -> pd.DataFrame:
+        """
+        Build a frequency table with pd.crosstab (no 'values' needed).
+        This avoids the 'not 1-dimensional' grouper error when index==values or
+        when subtle duplicate headers exist.
+        """
+        import unicodedata
+        import re
+
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+            return pd.DataFrame({"Info": ["Table not found or empty"]})
+
+        work = df.copy()
+        if isinstance(work.columns, pd.MultiIndex):
+            work.columns = ["_".join([str(c) for c in tup if str(c)]).strip() for tup in work.columns]
+        if isinstance(work.index, pd.MultiIndex):
+            work = work.reset_index()
+        work = work.reset_index(drop=True)
+
+        def _norm_header(s: str) -> str:
+            s = "" if s is None else str(s)
+            s = unicodedata.normalize("NFKC", s).replace("\ufeff", "").replace("\u200b", "").replace("\xa0", " ")
+            s = re.sub(r"\s+", " ", s.strip())
+            return s
+
+        work.columns = pd.Index([_norm_header(c) for c in work.columns])
+
+        def _canon(s: str) -> str:
+            s = s.lower().replace(" ", "").replace("_", "").replace("-", "")
+            return s
+
+        # Deduplicate columns by canonical key
+        seen = set()
+        keep = []
+        for c in work.columns:
+            k = _canon(c)
+            if k in seen:
+                continue
+            seen.add(k)
+            keep.append(c)
+        work = work[keep]
+
+        # Resolver by canonical key
+        def _resolve(name: str) -> Optional[str]:
+            target = _canon(_norm_header(name))
+            for c in work.columns:
+                if _canon(c) == target:
+                    return c
+            for c in work.columns:
+                if _canon(c).startswith(target):
+                    return c
+            return None
+
+        idx_col = _resolve(index_field)
+        col_col = _resolve(columns_field)
+        if not idx_col or not col_col:
+            missing = [n for n, v in [(index_field, idx_col), (columns_field, col_col)] if v is None]
+            return pd.DataFrame({
+                "Info": [f"Required columns missing: {', '.join(missing)}"],
+                "PresentColumns": [", ".join(work.columns.tolist())],
+            })
+
+        # Clean data
+        work[idx_col] = work[idx_col].astype(str).map(_norm_header)
+        work[col_col] = work[col_col].astype(str).map(_norm_header)
+
+        try:
+            ct = pd.crosstab(
+                index=work[idx_col],
+                columns=work[col_col],
+                dropna=False,
+            ).reset_index()
+
+            # Add margins (row totals and overall total)
+            if add_margins:
+                ct["Total"] = ct.drop(columns=[idx_col]).sum(axis=1)
+                total_row = {idx_col: "Total"}
+                for c in ct.columns:
+                    if c != idx_col:
+                        total_row[c] = ct[c].sum()
+                ct = pd.concat([ct, pd.DataFrame([total_row])], ignore_index=True)
+
+            return ct
+        except Exception as ex:
+            return pd.DataFrame({
+                "Error": [f"Crosstab build failed: {ex}"],
+                "PresentColumns": [", ".join(work.columns.tolist())],
+            })
+
+    @staticmethod
+    def _apply_frequency_column_filter(piv: pd.DataFrame, filters: List[str]) -> pd.DataFrame:
+        """
+        Keep only the first (index) column, 'Total' (if present), and columns whose
+        header contains any of the provided substrings (case-insensitive).
+        If filters is empty/None, returns the pivot unchanged.
+        """
+        if not isinstance(piv, pd.DataFrame) or piv.empty or not filters:
+            return piv
+
+        # Normalize column names
+        cols = [str(c) for c in piv.columns.tolist()]
+        keep = []
+
+        # First column (index after reset_index, e.g., 'NodeId')
+        if cols:
+            keep.append(cols[0])
+
+        # Case-insensitive filtering
+        fl = [f.lower() for f in filters if f]
+        for c in cols[1:]:
+            lc = c.lower()
+            if c == "Total" or lc == "total":
+                keep.append(c)
+                continue
+            if any(f in lc for f in fl):
+                keep.append(c)
+
+        # Ensure 'Total' is preserved if nothing else matched
+        if len(keep) <= 1 and "Total" in cols and "Total" not in keep:
+            keep.append("Total")
+
+        try:
+            return piv.loc[:, keep]
+        except Exception:
+            # Fallback: do not filter if selection fails for any reason
+            return piv
+
+
+# --------- kept local to preserve current behavior (module-level helper) ----
+def make_unique_columns(cols: List[str]) -> List[str]:
+    """
+    Ensure column names are unique by appending a numeric suffix when needed.
+    """
+    seen: Dict[str, int] = {}
+    unique = []
+    for c in cols:
+        base = c or "Col"
+        if base not in seen:
+            seen[base] = 0
+            unique.append(base)
+        else:
+            seen[base] += 1
+            unique.append(f"{base}_{seen[base]}")
+    return unique

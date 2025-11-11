@@ -4,6 +4,28 @@
 
 ---
 
+## Release: v0.2.5
+- ### Release Date: 2025-11-11
+
+- ### Main Changes:
+  
+  - #### 🚨 Breaking Changes:
+  
+  - #### 🌟 New Features:
+    - Configuration Audit now creates Pivot Table with useful Summary Information. 
+    - Added Frequencies selector in GUI to select which frequencies you want to run Audit for.
+
+  - #### 🚀 Enhancements:
+    
+  - #### 🐛 Bug fixes:
+    - Minor bug fixing.
+    - Fixed Exception on `Consistency Check` module when Pre or Post folder has not been found in Input Folder
+    
+  - #### 📚 Documentation: 
+    - Updated documentation with latest changes
+
+---
+
 ## Release: v0.2.4
 - ### Release Date: 2025-11-10
 

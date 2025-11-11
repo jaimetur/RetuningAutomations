@@ -28,7 +28,6 @@ class ConsistencyChecks:
     Loads and compares GU/NR relation tables before (Pre) and after (Post) a refarming process.
     (Se mantiene la funcionalidad exacta.)
     """
-
     PRE_TOKENS = ("pre", "step0")
     POST_TOKENS = ("post", "step3")
     DATE_RE = re.compile(r"(?P<date>(19|20)\d{6})")  # yyyymmdd
@@ -36,6 +35,10 @@ class ConsistencyChecks:
 
     def __init__(self) -> None:
         self.tables: Dict[str, pd.DataFrame] = {}
+        # NEW: flags to signal whether at least one Pre/Post folder was found
+        self.pre_folder_found: bool = False
+        self.post_folder_found: bool = False
+
 
     # --------- folder helpers ---------
     @staticmethod
@@ -72,10 +75,15 @@ class ConsistencyChecks:
 
     # ----------------------------- LOADING ----------------------------- #
     def loadPrePost(self, input_dir: str) -> Dict[str, pd.DataFrame]:
+        # Keep hard error only if the base directory truly does not exist
         if not os.path.isdir(input_dir):
             raise NotADirectoryError(f"Invalid directory: {input_dir}")
 
         collected: Dict[str, List[pd.DataFrame]] = {"GUtranCellRelation": [], "NRCellRelation": []}
+
+        # Flags to detect if any Pre/Post folder exists at all
+        self.pre_folder_found = False  # True if a folder matching PRE_TOKENS is present
+        self.post_folder_found = False  # True if a folder matching POST_TOKENS is present
 
         for entry in os.scandir(input_dir):
             if not entry.is_dir():
@@ -84,6 +92,13 @@ class ConsistencyChecks:
             prepost = self._detect_prepost(entry.name)
             if not prepost:
                 continue
+
+            # Mark presence of Pre/Post folders (even if later they contain no parsable tables)
+            if prepost == "Pre":
+                self.pre_folder_found = True
+            elif prepost == "Post":
+                self.post_folder_found = True
+
             date_str = self._extract_date(entry.name)
 
             for fname in os.listdir(entry.path):
@@ -116,17 +131,30 @@ class ConsistencyChecks:
                     df = self._insert_front_columns(df, prepost, date_str)
                     collected[mo].append(df)
 
+        # Build final tables dictionary
         self.tables = {}
         for base, chunks in collected.items():
             if chunks:
                 self.tables[self._table_key_name(base)] = pd.concat(chunks, ignore_index=True)
+
+        # Soft warnings if a Pre or Post folder was not found (do not raise)
+        if not self.pre_folder_found:
+            print(f"[INFO] 'Pre' folder not found under: {input_dir}. Returning to GUI.")
+        if not self.post_folder_found:
+            print(f"[INFO] 'Post' folder not found under: {input_dir}. Returning to GUI.")
+
+        # Also warn if nothing could be loaded at all (no exception)
+        if not self.tables:
+            print(f"[WARNING] No GU/NR tables were loaded from: {input_dir}.")
 
         return self.tables
 
     # ----------------------------- COMPARISON ----------------------------- #
     def comparePrePost(self, freq_before: str, freq_after: str, module_name: Optional[str] = "") -> Dict[str, Dict[str, pd.DataFrame]]:
         if not self.tables:
-            raise RuntimeError("No tables loaded. Run loadPrePost() first.")
+            # Soft fail: do not raise, just inform and return empty results
+            print(f"{module_name} [WARNING] No tables loaded. Skipping comparison (likely missing Pre/Post folders).")
+            return {}
 
         results: Dict[str, Dict[str, pd.DataFrame]] = {}
 
