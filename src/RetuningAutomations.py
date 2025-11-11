@@ -27,6 +27,7 @@ import configparser
 import traceback
 from pathlib import Path
 import inspect
+from tkinter import messagebox
 
 # Import our different Classes
 from src.modules.ConsistencyChecks import ConsistencyChecks
@@ -156,7 +157,7 @@ def gui_config_dialog(
     # Center window
     try:
         root.update_idletasks()
-        w, h = 750, 430
+        w, h = 770, 430
         sw = root.winfo_screenwidth()
         sh = root.winfo_screenheight()
         x = (sw // 2) - (w // 2)
@@ -175,6 +176,7 @@ def gui_config_dialog(
 
     # --- Layout
     pad = {'padx': 10, 'pady': 6}
+    pad_tight = {'padx': 4, 'pady': 2}
     frm = ttk.Frame(root, padding=12)
     frm.pack(fill="both", expand=True)
 
@@ -205,22 +207,44 @@ def gui_config_dialog(
     ttk.Separator(frm).grid(row=4, column=0, columnspan=3, sticky="ew", **pad)
     ttk.Label(frm, text="Summary Filters (for pivot columns in Configuration Audit):").grid(row=5, column=0, columnspan=3, sticky="w", **pad)
 
-    # Left: multi-select list of NETWORK_FREQUENCIES
+    # Left: multi-select list of NETWORK_FREQUENCIES with vertical scrollbar
     list_frame = ttk.Frame(frm)
-    list_frame.grid(row=6, column=0, columnspan=1, sticky="nsw", **pad)
+    # list_frame.grid(row=6, column=0, columnspan=1, sticky="nsw", **pad)
+    list_frame.grid(row=6, column=0, columnspan=1, sticky="nsw", **pad_tight)
     ttk.Label(list_frame, text="Available frequencies:").pack(anchor="w")
-    lb = tk.Listbox(list_frame, selectmode="extended", height=10, width=24, exportselection=False)
+
+    # Frame that holds the Listbox and Scrollbar
+    lb_container = ttk.Frame(list_frame)
+    lb_container.pack(fill="both", expand=True)
+
+    # Scrollbar
+    scrollbar = ttk.Scrollbar(lb_container, orient="vertical")
+    scrollbar.pack(side="right", fill="y")
+
+    # Listbox linked to the scrollbar
+    lb = tk.Listbox(
+        lb_container,
+        selectmode="extended",
+        height=10,
+        width=24,
+        exportselection=False,
+        yscrollcommand=scrollbar.set
+    )
     for freq in NETWORK_FREQUENCIES:
         lb.insert("end", freq)
-    lb.pack(fill="y", expand=False)
+    lb.pack(side="left", fill="both", expand=True)
+
+    scrollbar.config(command=lb.yview)
 
     btns_frame = ttk.Frame(frm)
-    btns_frame.grid(row=6, column=1, sticky="n", **pad)
+    # btns_frame.grid(row=6, column=1, sticky="n", **pad)
+    btns_frame.grid(row=6, column=1, sticky="n", **pad_tight)
 
     # Right: entry showing selected (comma-separated)
     right_frame = ttk.Frame(frm)
-    right_frame.grid(row=6, column=2, sticky="nsew", **pad)
-    ttk.Label(right_frame, text="Selected (comma-separated):").grid(row=0, column=0, sticky="w")
+    # right_frame.grid(row=6, column=2, sticky="nsew", **pad)
+    right_frame.grid(row=6, column=2, sticky="nsew", **pad_tight)
+    ttk.Label(right_frame, text="Frequencies Filter (Empty = No Filter):").grid(row=0, column=0, sticky="w")
     ent_selected = ttk.Entry(right_frame, textvariable=selected_csv_var, width=36)
     ent_selected.grid(row=1, column=0, sticky="ew")
 
@@ -245,14 +269,15 @@ def gui_config_dialog(
         lb.select_set(0, "end")
         add_selected()
 
-    def clear_all():
+    def clear_filters():
+        """Clear only the summary frequency filters (no input dir / pre/post)."""
         lb.selection_clear(0, "end")
         selected_csv_var.set("")
 
     ttk.Button(btns_frame, text="Add →", command=add_selected).pack(pady=4, fill="x")
     ttk.Button(btns_frame, text="← Remove", command=remove_selected).pack(pady=4, fill="x")
     ttk.Button(btns_frame, text="Select all", command=select_all).pack(pady=4, fill="x")
-    ttk.Button(btns_frame, text="Clear", command=clear_all).pack(pady=4, fill="x")
+    ttk.Button(btns_frame, text="Clear Filter", command=clear_filters).pack(pady=4, fill="x")
 
     # Row 7: Buttons
     btns = ttk.Frame(frm)
@@ -344,6 +369,38 @@ def run_consistency_checks(input_dir: str, freq_pre: Optional[str], freq_post: O
     module_name = "[Consistency Checks (Pre/Post Comparison)]"
     print(f"{module_name} Running…")
     print(f"{module_name} Input folder: '{input_dir}'")
+
+    # --- Detect presence of Pre/Post folders early and exit if missing ---
+    pre_found, post_found = False, False
+    try:
+        for entry in os.scandir(input_dir):
+            if not entry.is_dir():
+                continue
+            tag = ConsistencyChecks._detect_prepost(entry.name)
+            if tag == "Pre":
+                pre_found = True
+            elif tag == "Post":
+                post_found = True
+    except FileNotFoundError:
+        # Si el input_dir no existe, conserva tu comportamiento actual más abajo
+        pass
+
+    if not (pre_found and post_found):
+        missing = []
+        if not pre_found:
+            missing.append("Pre")
+        if not post_found:
+            missing.append("Post")
+        msg = (
+            f"Missing required folder(s): {', '.join(missing)}\n\n"
+            "No processing will be performed. Please select a folder that contains both Pre and Post folders."
+        )
+        try:
+            messagebox.showwarning("Missing Pre/Post folders", msg)
+        except Exception:
+            print(f"{module_name} [WARNING] {msg}")
+        return
+    # -------------------------------------------------------------------------------
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     versioned_suffix = f"{timestamp}_v{TOOL_VERSION}"

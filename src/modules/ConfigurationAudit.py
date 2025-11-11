@@ -236,14 +236,24 @@ class ConfigurationAudit:
         )
         pivot_freq_rel = self._apply_frequency_column_filter(pivot_freq_rel, freq_filters)
 
-        pivot_gu_syncfreq = self._safe_pivot_count(
+        # pivot_gu_syncfreq = self._safe_pivot_count(
+        #     df=df_gu_syncfreq,
+        #     index_field="NodeId",
+        #     columns_field="arfcn",
+        #     values_field="NodeId",
+        #     add_margins=True,
+        #     margins_name="Total",
+        # )
+
+        # After (robust path without 'values'):
+        pivot_gu_syncfreq = self._safe_crosstab_count(
             df=df_gu_syncfreq,
             index_field="NodeId",
             columns_field="arfcn",
-            values_field="NodeId",
             add_margins=True,
             margins_name="Total",
         )
+
         pivot_gu_syncfreq = self._apply_frequency_column_filter(pivot_gu_syncfreq, freq_filters)
 
         # =====================================================================
@@ -483,6 +493,102 @@ class ConfigurationAudit:
         except Exception as ex:
             return pd.DataFrame({
                 "Error": [f"Pivot build failed: {ex}"],
+                "PresentColumns": [", ".join(work.columns.tolist())],
+            })
+
+    def _safe_crosstab_count(
+            self,
+            df: pd.DataFrame,
+            index_field: str,
+            columns_field: str,
+            add_margins: bool = True,
+            margins_name: str = "Total",
+    ) -> pd.DataFrame:
+        """
+        Build a frequency table with pd.crosstab (no 'values' needed).
+        This avoids the 'not 1-dimensional' grouper error when index==values or
+        when subtle duplicate headers exist.
+        """
+        import unicodedata
+        import re
+
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+            return pd.DataFrame({"Info": ["Table not found or empty"]})
+
+        work = df.copy()
+        if isinstance(work.columns, pd.MultiIndex):
+            work.columns = ["_".join([str(c) for c in tup if str(c)]).strip() for tup in work.columns]
+        if isinstance(work.index, pd.MultiIndex):
+            work = work.reset_index()
+        work = work.reset_index(drop=True)
+
+        def _norm_header(s: str) -> str:
+            s = "" if s is None else str(s)
+            s = unicodedata.normalize("NFKC", s).replace("\ufeff", "").replace("\u200b", "").replace("\xa0", " ")
+            s = re.sub(r"\s+", " ", s.strip())
+            return s
+
+        work.columns = pd.Index([_norm_header(c) for c in work.columns])
+
+        def _canon(s: str) -> str:
+            s = s.lower().replace(" ", "").replace("_", "").replace("-", "")
+            return s
+
+        # Deduplicate columns by canonical key
+        seen = set()
+        keep = []
+        for c in work.columns:
+            k = _canon(c)
+            if k in seen:
+                continue
+            seen.add(k)
+            keep.append(c)
+        work = work[keep]
+
+        # Resolver by canonical key
+        def _resolve(name: str) -> Optional[str]:
+            target = _canon(_norm_header(name))
+            for c in work.columns:
+                if _canon(c) == target:
+                    return c
+            for c in work.columns:
+                if _canon(c).startswith(target):
+                    return c
+            return None
+
+        idx_col = _resolve(index_field)
+        col_col = _resolve(columns_field)
+        if not idx_col or not col_col:
+            missing = [n for n, v in [(index_field, idx_col), (columns_field, col_col)] if v is None]
+            return pd.DataFrame({
+                "Info": [f"Required columns missing: {', '.join(missing)}"],
+                "PresentColumns": [", ".join(work.columns.tolist())],
+            })
+
+        # Clean data
+        work[idx_col] = work[idx_col].astype(str).map(_norm_header)
+        work[col_col] = work[col_col].astype(str).map(_norm_header)
+
+        try:
+            ct = pd.crosstab(
+                index=work[idx_col],
+                columns=work[col_col],
+                dropna=False,
+            ).reset_index()
+
+            # Add margins (row totals and overall total)
+            if add_margins:
+                ct["Total"] = ct.drop(columns=[idx_col]).sum(axis=1)
+                total_row = {idx_col: "Total"}
+                for c in ct.columns:
+                    if c != idx_col:
+                        total_row[c] = ct[c].sum()
+                ct = pd.concat([ct, pd.DataFrame([total_row])], ignore_index=True)
+
+            return ct
+        except Exception as ex:
+            return pd.DataFrame({
+                "Error": [f"Crosstab build failed: {ex}"],
                 "PresentColumns": [", ".join(work.columns.tolist())],
             })
 
