@@ -185,11 +185,134 @@ class ConfigurationAudit:
             })
 
         # =====================================================================
+        #        PHASE 4.1: Prepare pivot tables for extra summary sheets
+        # =====================================================================
+        # Note: Minimal-impact addition. We do not alter existing parsing/writing
+        # logic. We just collect MOs and build three pivot sheets right after
+        # writing the "Summary" sheet.
+
+        # Collect dataframes for the specific MOs we need
+        mo_collectors: Dict[str, List[pd.DataFrame]] = {
+            "NRCellDU": [],
+            "NRFreqRelation": [],
+            "GUtranSyncSignalFrequency": [],
+        }
+        for entry in table_entries:
+            mo_name = str(entry.get("sheet_candidate", "")).strip()
+            if mo_name in mo_collectors:
+                df_mo = entry["df"]
+                # Ensure we only append non-empty dataframes
+                if isinstance(df_mo, pd.DataFrame) and not df_mo.empty:
+                    mo_collectors[mo_name].append(df_mo)
+
+        # Concatenate per-MO dataframes (if multiple logs contributed the same MO)
+        def _concat_or_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
+            """Return a single concatenated DataFrame or an empty one if none."""
+            if not dfs:
+                return pd.DataFrame()
+            try:
+                return pd.concat(dfs, ignore_index=True)
+            except Exception:
+                # Fallback: if concat fails due to column mismatches, align by intersection
+                common_cols = set.intersection(*(set(d.columns) for d in dfs)) if dfs else set()
+                if not common_cols:
+                    return pd.DataFrame()
+                dfs_aligned = [d[list(common_cols)].copy() for d in dfs]
+                return pd.concat(dfs_aligned, ignore_index=True)
+
+        df_nr_celldu = _concat_or_empty(mo_collectors["NRCellDU"])
+        df_nr_freqrel = _concat_or_empty(mo_collectors["NRFreqRelation"])
+        df_gu_syncfreq = _concat_or_empty(mo_collectors["GUtranSyncSignalFrequency"])
+
+        def _safe_pivot_count(
+            df: pd.DataFrame,
+            index_field: str,
+            columns_field: str,
+            values_field: str,
+            add_margins: bool = True,
+            margins_name: str = "Total",
+        ) -> pd.DataFrame:
+            """
+            Build a pivot counting 'values_field' grouped by index/columns.
+            If missing columns or empty df, return a friendly message.
+            """
+            required = {index_field, columns_field, values_field}
+            if df is None or df.empty or not required.issubset(set(df.columns)):
+                # Return a small DataFrame explaining the situation
+                msg = "Table not found or required columns are missing"
+                details = f"Required: {sorted(required)} | Present: {sorted(df.columns.tolist()) if isinstance(df, pd.DataFrame) else 'None'}"
+                return pd.DataFrame({"Info": [msg, details]})
+
+            try:
+                # Ensure string-like columns are treated consistently
+                work = df.copy()
+                for col in [index_field, columns_field, values_field]:
+                    work[col] = work[col].astype(str).str.strip()
+
+                piv = pd.pivot_table(
+                    work,
+                    index=index_field,
+                    columns=columns_field,
+                    values=values_field,
+                    aggfunc="count",
+                    fill_value=0,
+                    margins=add_margins,
+                    margins_name=margins_name,
+                )
+                # Reset index so it writes nicely to Excel
+                piv = piv.reset_index()
+                # If columns is a MultiIndex due to margins, flatten them
+                if isinstance(piv.columns, pd.MultiIndex):
+                    piv.columns = [" ".join([str(x) for x in tup if str(x) != ""]).strip() for tup in piv.columns.values]
+                return piv
+            except Exception as ex:
+                return pd.DataFrame({"Error": [f"Pivot build failed: {ex}"]})
+
+        # Define the three required pivots according to user spec
+        # 1) "Summary NR Cells": from NRCellDU -> cols=ssbFrequency, rows=NodeId, values=count of NRCellDUId
+        pivot_nr_cells = _safe_pivot_count(
+            df=df_nr_celldu,
+            index_field="NodeId",
+            columns_field="ssbFrequency",
+            values_field="NRCellDUId",
+            add_margins=True,
+            margins_name="Total",
+        )
+
+        # 2) "Summary FreqRelation": from NRFreqRelation -> cols=NRFreqRelationId, rows=NodeId, values=count of NRCellCUId
+        pivot_freq_rel = _safe_pivot_count(
+            df=df_nr_freqrel,
+            index_field="NodeId",
+            columns_field="NRFreqRelationId",
+            values_field="NRCellCUId",
+            add_margins=True,
+            margins_name="Total",
+        )
+
+        # 3) "Summary GUtranFreq": from GUtranSyncSignalFrequency -> cols=GUtranSyncSignalFrequencyId, rows=NodeId, values=count of NodeId
+        #    (count of NodeId per GUtranSyncSignalFrequency found)
+        pivot_gu_syncfreq = _safe_pivot_count(
+            df=df_gu_syncfreq,
+            index_field="NodeId",
+            columns_field="GUtranSyncSignalFrequencyId",
+            values_field="NodeId",
+            add_margins=True,
+            margins_name="Total",
+        )
+
+        # =====================================================================
         #                PHASE 5: Write the Excel file
         # =====================================================================
         with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
             # Write Summary first
             pd.DataFrame(summary_rows).to_excel(writer, sheet_name="Summary", index=False)
+
+            # Write the three additional summary sheets right after "Summary"
+            # (Names are fixed as requested; minimal-impact addition)
+            pivot_nr_cells.to_excel(writer, sheet_name="Summary NR Cells", index=False)
+            pivot_freq_rel.to_excel(writer, sheet_name="Summary FreqRelation", index=False)
+            pivot_gu_syncfreq.to_excel(writer, sheet_name="Summary GUtranFreq", index=False)
+
             # Then write each table in the final determined order
             for entry in table_entries:
                 entry["df"].to_excel(writer, sheet_name=entry["final_sheet"], index=False)
@@ -309,3 +432,21 @@ class ConfigurationAudit:
     @staticmethod
     def _find_all_subnetwork_headers(lines: List[str]) -> List[int]:
         return find_all_subnetwork_headers(lines)
+
+
+# --------- small utility kept local to preserve current behavior ---------
+def make_unique_columns(cols: List[str]) -> List[str]:
+    """
+    Ensure columns names are unique by appending a numeric suffix when needed.
+    """
+    seen: Dict[str, int] = {}
+    unique = []
+    for c in cols:
+        base = c or "Col"
+        if base not in seen:
+            seen[base] = 0
+            unique.append(base)
+        else:
+            seen[base] += 1
+            unique.append(f"{base}_{seen[base]}")
+    return unique
