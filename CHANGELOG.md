@@ -19,6 +19,7 @@
     
   - #### 🐛 Bug fixes:
     - Minor bug fixing.
+    - Fixed Exception on `Consistency Check` module when Pre or Post folder has not been found in Input Folder
     
   - #### 📚 Documentation: 
     - Updated documentation with latest changes
