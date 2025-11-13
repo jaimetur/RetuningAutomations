@@ -40,7 +40,11 @@ class ConsistencyChecks:
         # NEW: flags to signal whether at least one Pre/Post folder was found
         self.pre_folder_found: bool = False
         self.post_folder_found: bool = False
-
+        # NEW: keep only per-table/per-side source file paths to be used exclusively in Summary (do not store them in DataFrames)
+        self._source_paths: Dict[str, Dict[str, List[tuple]]] = {
+            "GUtranCellRelation": {"Pre": [], "Post": []},
+            "NRCellRelation": {"Pre": [], "Post": []},
+        }
 
     # --------- folder helpers ---------
     @staticmethod
@@ -64,80 +68,141 @@ class ConsistencyChecks:
         return table_base.strip()
 
     # ----------------------------- LOADING ----------------------------- #
-    def loadPrePost(self, input_dir: str) -> Dict[str, pd.DataFrame]:
-        # Keep hard error only if the base directory truly does not exist
-        if not os.path.isdir(input_dir):
-            raise NotADirectoryError(f"Invalid directory: {input_dir}")
+    def loadPrePost(self, input_dir_or_pre: str, post_dir: Optional[str] = None) -> Dict[str, pd.DataFrame]:
+        """
+        Load Pre/Post either from:
+          - Legacy mode: a single parent folder that contains 'Pre' and 'Post' subfolders (post_dir=None), or
+          - Dual-input mode: two explicit folders (pre_dir, post_dir) passed in.
 
-        collected: Dict[str, List[pd.DataFrame]] = {"GUtranCellRelation": [], "NRCellRelation": []}
+        Returns a dict with concatenated GU/NR DataFrames in self.tables.
+        """
+        if post_dir is None:
+            # ===== Legacy single-folder mode (original behavior) =====
+            input_dir = input_dir_or_pre
+            if not os.path.isdir(input_dir):
+                raise NotADirectoryError(f"Invalid directory: {input_dir}")
 
-        # Flags to detect if any Pre/Post folder exists at all
-        self.pre_folder_found = False  # True if a folder matching PRE_TOKENS is present
-        self.post_folder_found = False  # True if a folder matching POST_TOKENS is present
+            collected: Dict[str, List[pd.DataFrame]] = {"GUtranCellRelation": [], "NRCellRelation": []}
+            self.pre_folder_found = False
+            self.post_folder_found = False
 
-        for entry in os.scandir(input_dir):
-            if not entry.is_dir():
-                continue
-
-            prepost = self._detect_prepost(entry.name)
-            if not prepost:
-                continue
-
-            # Mark presence of Pre/Post folders (even if later they contain no parsable tables)
-            if prepost == "Pre":
-                self.pre_folder_found = True
-            elif prepost == "Post":
-                self.post_folder_found = True
-
-            date_str = extract_date(entry.name)
-
-            for fname in os.listdir(entry.path):
-                lower = fname.lower()
-                if not (lower.endswith(".log") or lower.endswith(".txt")):
+            for entry in os.scandir(input_dir):
+                if not entry.is_dir():
                     continue
-                fpath = os.path.join(entry.path, fname)
-                if not os.path.isfile(fpath):
+                prepost = self._detect_prepost(entry.name)
+                if not prepost:
                     continue
+                if prepost == "Pre":
+                    self.pre_folder_found = True
+                elif prepost == "Post":
+                    self.post_folder_found = True
 
-                lines = read_text_lines(fpath)
-                if not lines:
-                    continue
+                date_str = extract_date(entry.name)
 
-                headers = find_all_subnetwork_headers(lines)
-                if not headers:
-                    continue
-                headers.append(len(lines))
-
-                for i in range(len(headers) - 1):
-                    h, nxt = headers[i], headers[i + 1]
-                    mo = extract_mo_from_subnetwork_line(lines[h])
-                    if mo not in ("GUtranCellRelation", "NRCellRelation"):
+                for fname in os.listdir(entry.path):
+                    lower = fname.lower()
+                    if not (lower.endswith(".log") or lower.endswith(".txt")):
+                        continue
+                    fpath = os.path.join(entry.path, fname)
+                    if not os.path.isfile(fpath):
                         continue
 
-                    df = parse_table_slice_from_subnetwork(lines, h, nxt)
-                    if df is None or df.empty:
+                    lines = read_text_lines(fpath)
+                    if not lines:
                         continue
 
-                    df = self._insert_front_columns(df, prepost, date_str)
-                    collected[mo].append(df)
+                    headers = find_all_subnetwork_headers(lines)
+                    if not headers:
+                        continue
+                    headers.append(len(lines))
 
-        # Build final tables dictionary
-        self.tables = {}
-        for base, chunks in collected.items():
-            if chunks:
-                self.tables[self._table_key_name(base)] = pd.concat(chunks, ignore_index=True)
+                    for i in range(len(headers) - 1):
+                        h, nxt = headers[i], headers[i + 1]
+                        mo = extract_mo_from_subnetwork_line(lines[h])
+                        if mo not in ("GUtranCellRelation", "NRCellRelation"):
+                            continue
 
-        # Soft warnings if a Pre or Post folder was not found (do not raise)
-        if not self.pre_folder_found:
-            print(f"[INFO] 'Pre' folder not found under: {input_dir}. Returning to GUI.")
-        if not self.post_folder_found:
-            print(f"[INFO] 'Post' folder not found under: {input_dir}. Returning to GUI.")
+                        df = parse_table_slice_from_subnetwork(lines, h, nxt)
+                        if df is None or df.empty:
+                            continue
 
-        # Also warn if nothing could be loaded at all (no exception)
-        if not self.tables:
-            print(f"[WARNING] No GU/NR tables were loaded from: {input_dir}.")
+                        df = self._insert_front_columns(df, prepost, date_str)
+                        # NEW: store file path only for Summary; do not persist it inside DataFrames
+                        self._source_paths.setdefault(mo, {}).setdefault(prepost, []).append((date_str or "", fpath))
+                        collected[mo].append(df)
 
-        return self.tables
+            self.tables = {}
+            for base, chunks in collected.items():
+                if chunks:
+                    self.tables[self._table_key_name(base)] = pd.concat(chunks, ignore_index=True)
+
+            if not self.pre_folder_found:
+                print(f"[INFO] 'Pre' folder not found under: {input_dir}. Returning to GUI.")
+            if not self.post_folder_found:
+                print(f"[INFO] 'Post' folder not found under: {input_dir}. Returning to GUI.")
+            if not self.tables:
+                print(f"[WARNING] No GU/NR tables were loaded from: {input_dir}.")
+
+            return self.tables
+
+        else:
+            # ===== Dual-input mode: explicit PRE/POST folders =====
+            pre_dir = input_dir_or_pre
+            if not os.path.isdir(pre_dir):
+                raise NotADirectoryError(f"Invalid PRE directory: {pre_dir}")
+            if not os.path.isdir(post_dir):
+                raise NotADirectoryError(f"Invalid POST directory: {post_dir}")
+
+            collected: Dict[str, List[pd.DataFrame]] = {"GUtranCellRelation": [], "NRCellRelation": []}
+            self.pre_folder_found = True
+            self.post_folder_found = True
+
+            def _collect_from(dir_path: str, prepost: str):
+                date_str = extract_date(os.path.basename(dir_path))
+                for fname in os.listdir(dir_path):
+                    lower = fname.lower()
+                    if not (lower.endswith(".log") or lower.endswith(".txt")):
+                        continue
+                    fpath = os.path.join(dir_path, fname)
+                    if not os.path.isfile(fpath):
+                        continue
+
+                    lines = read_text_lines(fpath)
+                    if not lines:
+                        continue
+
+                    headers = find_all_subnetwork_headers(lines)
+                    if not headers:
+                        continue
+                    headers.append(len(lines))
+
+                    for i in range(len(headers) - 1):
+                        h, nxt = headers[i], headers[i + 1]
+                        mo = extract_mo_from_subnetwork_line(lines[h])
+                        if mo not in ("GUtranCellRelation", "NRCellRelation"):
+                            continue
+
+                        df = parse_table_slice_from_subnetwork(lines, h, nxt)
+                        if df is None or df.empty:
+                            continue
+
+                        df = self._insert_front_columns(df, prepost, date_str)
+                        # NEW: store file path only for Summary; do not persist it inside DataFrames
+                        self._source_paths.setdefault(mo, {}).setdefault(prepost, []).append((date_str or "", fpath))
+                        collected[mo].append(df)
+
+            _collect_from(pre_dir, "Pre")
+            _collect_from(post_dir, "Post")
+
+            self.tables = {}
+            for base, chunks in collected.items():
+                if chunks:
+                    self.tables[self._table_key_name(base)] = pd.concat(chunks, ignore_index=True)
+
+            if not self.tables:
+                print(f"[WARNING] No GU/NR tables were loaded from: {pre_dir} and {post_dir}.")
+
+            return self.tables
 
     # ----------------------------- COMPARISON ----------------------------- #
     def comparePrePost(self, freq_before: str, freq_after: str, module_name: Optional[str] = "") -> Dict[str, Dict[str, pd.DataFrame]]:
@@ -174,8 +239,23 @@ class ConsistencyChecks:
 
             pre_df_full = select_latest_by_date(df_all, "Pre")
             post_df_full = select_latest_by_date(df_all, "Post")
+
             if pre_df_full.empty and post_df_full.empty:
                 continue
+
+            # Pick representative source file for Summary from internal paths (no DF column)
+            def _pick_src(tbl: str, side: str, target_date: str) -> str:
+                pool = self._source_paths.get(tbl, {}).get(side, [])
+                # Prefer exact date match (latest set), else first available
+                for d, p in pool:
+                    if d == target_date:
+                        return p
+                return pool[0][1] if pool else ""
+
+            pre_date = pre_df_full["Date"].max() if not pre_df_full.empty and "Date" in pre_df_full.columns else ""
+            post_date = post_df_full["Date"].max() if not post_df_full.empty and "Date" in post_df_full.columns else ""
+            pre_source_file  = _pick_src(table_name, "Pre",  pre_date)
+            post_source_file = _pick_src(table_name, "Post", post_date)
 
             pre_norm = normalize_df(pre_df_full)
             post_norm = normalize_df(post_df_full)
@@ -293,7 +373,6 @@ class ConsistencyChecks:
                     missing_in_post[col] = missing_in_post[col].astype(str)
 
             # --- minimal replacement for new/missing frequency pairing ---
-
             def with_freq_pair(df_src: pd.DataFrame, tbl: str, kind: str) -> pd.DataFrame:
                 """
                 Build a light table for pair counting:
@@ -398,6 +477,8 @@ class ConsistencyChecks:
                     "freq_col": freq_col,
                     "pre_rows": int(pre_df_full.shape[0]),
                     "post_rows": int(post_df_full.shape[0]),
+                    "pre_source_file": pre_source_file,  # NEW
+                    "post_source_file": post_source_file,  # NEW
                 },
             }
 
@@ -442,13 +523,18 @@ class ConsistencyChecks:
                         "Frequency_Discrepancies": freq_disc,
                         "New_Relations": len(bucket.get("new_in_post", pd.DataFrame())),
                         "Missing_Relations": len(bucket.get("missing_in_post", pd.DataFrame())),
+                        "SourceFile_Pre": meta.get("pre_source_file", ""),  # NEW (at the end)
+                        "SourceFile_Post": meta.get("post_source_file", ""),  # NEW (at the end)
                     })
+
             summary_df = pd.DataFrame(summary_rows) if summary_rows else pd.DataFrame(
                 columns=[
                     "Table", "KeyColumns", "FreqColumn", "Relations_Pre", "Relations_Post",
-                    "Parameters_Discrepancies", "Frequency_Discrepancies", "New_Relations", "Missing_Relations"
+                    "Parameters_Discrepancies", "Frequency_Discrepancies", "New_Relations", "Missing_Relations",
+                    "SourceFile_Pre", "SourceFile_Post"  # NEW
                 ]
             )
+
             summary_df.to_excel(writer, sheet_name="Summary", index=False)
 
             # Summary_Detailed

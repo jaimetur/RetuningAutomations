@@ -12,9 +12,11 @@
   - #### 🚨 Breaking Changes:
   
   - #### 🌟 New Features:
+    - If Consistency Check module is selected, then use two input folders, one for Pre and one for Post (#25)
 
   - #### 🚀 Enhancements:
     - Align Summary headers to left (#23)
+    - Include input log folder in Summary sheets of Consistency Check (#24)
     
   - #### 🐛 Bug fixes:
     - Minor bug fixing.
