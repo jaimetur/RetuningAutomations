@@ -27,7 +27,6 @@ import configparser
 import traceback
 from pathlib import Path
 import inspect
-from tkinter import messagebox
 
 # Import our different Classes
 from src.modules.ConsistencyChecks import ConsistencyChecks
@@ -38,8 +37,8 @@ from src.modules.FinalCleanUp import FinalCleanUp
 # ================================ VERSIONING ================================ #
 
 TOOL_NAME           = "RetuningAutomations"
-TOOL_VERSION        = "0.2.6"
-TOOL_DATE           = "2025-11-12"
+TOOL_VERSION        = "0.2.7"
+TOOL_DATE           = "2025-11-13"
 TOOL_NAME_VERSION   = f"{TOOL_NAME}_v{TOOL_VERSION}"
 COPYRIGHT_TEXT      = "(c) 2025 - Jaime Tur (jaime.tur@ericsson.com)"
 TOOL_DESCRIPTION    = textwrap.dedent(f"""
