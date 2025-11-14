@@ -1196,10 +1196,10 @@ class ConfigurationAudit:
         return sections
 
     def _generate_ppt_summary(
-        self,
-        summary_audit_df: pd.DataFrame,
-        excel_path: str,
-        module_name: str = "",
+            self,
+            summary_audit_df: pd.DataFrame,
+            excel_path: str,
+            module_name: str = "",
     ) -> Optional[str]:
         """
         Generate a PPTX file next to the Excel with a slide per Category from SummaryAudit.
@@ -1207,14 +1207,22 @@ class ConfigurationAudit:
         - First slide: global title.
         - One slide per Category:
             • Slide title = Category
-            • Body = bullets with "Metric: Value | ExtraInfo"
+            • Body = bullets with:
+                - Main bullet (font size 14 pt): "Metric: Value"
+                - Secondary bullets (font size 10 pt): one per cell/node/sector
+                  that appears after the '|' separator in the text structure.
         """
         # Late import to avoid hard dependency if pptx is not installed
         try:
             from pptx import Presentation
+            from pptx.util import Pt
         except ImportError:
             print(f"{module_name} [INFO] python-pptx is not installed. Skipping PPT summary.")
             return None
+
+        # Font sizes for different bullet levels
+        MAIN_BULLET_SIZE = Pt(14)
+        SUB_BULLET_SIZE = Pt(10)
 
         sections = self._build_text_summary_structure(summary_audit_df)
 
@@ -1251,15 +1259,60 @@ class ConfigurationAudit:
 
             if not lines:
                 tf.text = "No data available for this category."
+                # Make sure this text uses main bullet size
+                p = tf.paragraphs[0]
+                for run in p.runs:
+                    run.font.size = MAIN_BULLET_SIZE
                 continue
 
-            # First bullet
-            tf.text = lines[0]
-            # Remaining bullets
-            for line in lines[1:]:
-                p = tf.add_paragraph()
-                p.text = line
-                p.level = 0  # top-level bullet
+            # Helper to apply font size to all runs in a paragraph
+            def _set_paragraph_font_size(paragraph, size):
+                for run in paragraph.runs:
+                    run.font.size = size
+
+            # Process each logical line:
+            #   "Metric: Value | Node1, Node2, Node3"
+            # becomes:
+            #   - "Metric: Value" (level 0, size 14)
+            #   - "Node1" (level 1, size 10)
+            #   - "Node2" (level 1, size 10)
+            #   - "Node3" (level 1, size 10)
+            first_main = True
+            for line in lines:
+                raw_text = line or ""
+                # Split main text and list of nodes/cells after '|'
+                if "|" in raw_text:
+                    main_text, extra_text = raw_text.split("|", 1)
+                    main_text = main_text.strip()
+                    extra_text = extra_text.strip()
+                else:
+                    main_text = raw_text.strip()
+                    extra_text = ""
+
+                # Create / reuse paragraph for main bullet
+                if first_main:
+                    # After tf.clear(), there is a single empty paragraph we can reuse
+                    p_main = tf.paragraphs[0]
+                    p_main.text = main_text
+                    p_main.level = 0
+                    first_main = False
+                else:
+                    p_main = tf.add_paragraph()
+                    p_main.text = main_text
+                    p_main.level = 0
+
+                _set_paragraph_font_size(p_main, MAIN_BULLET_SIZE)
+
+                # Create secondary bullets for each element after '|'
+                if extra_text:
+                    # Replace semicolons with commas to be more robust
+                    cleaned = extra_text.replace(";", ",")
+                    items = [t.strip() for t in cleaned.split(",") if t.strip()]
+                    for item in items:
+                        p_sub = tf.add_paragraph()
+                        p_sub.text = item
+                        p_sub.level = 1  # secondary bullet
+                        _set_paragraph_font_size(p_sub, SUB_BULLET_SIZE)
 
         prs.save(ppt_path)
         return ppt_path
