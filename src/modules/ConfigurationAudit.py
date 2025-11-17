@@ -39,8 +39,8 @@ class ConfigurationAudit:
         self,
         new_arfcn: int,
         old_arfcn: int,
-        allowed_ssb_n77: Optional[List[int]] = None,
-        allowed_n77b_arfcn: Optional[List[int]] = None,
+        allowed_n77_ssb: Optional[List[int]] = None,
+        allowed_n77_arfcn: Optional[List[int]] = None,
     ):
         """
         Initialize ConfigurationAudit with ARFCN-related parameters.
@@ -52,16 +52,16 @@ class ConfigurationAudit:
         self.OLD_ARFCN: int = int(old_arfcn)
 
         # Allowed SSB values for N77 cells (e.g. {648672, 653952})
-        if allowed_ssb_n77 is None:
+        if allowed_n77_ssb is None:
             self.ALLOWED_SSB_N77 = set()
         else:
-            self.ALLOWED_SSB_N77 = {int(v) for v in allowed_ssb_n77}
+            self.ALLOWED_SSB_N77 = {int(v) for v in allowed_n77_ssb}
 
         # Allowed ARFCN values for N77B sectors (e.g. {654652, 655324, 655984, 656656})
-        if allowed_n77b_arfcn is None:
+        if allowed_n77_arfcn is None:
             self.ALLOWED_N77B_ARFCN = set()
         else:
-            self.ALLOWED_N77B_ARFCN = {int(v) for v in allowed_n77b_arfcn}
+            self.ALLOWED_N77B_ARFCN = {int(v) for v in allowed_n77_arfcn}
 
     # =====================================================================
     #                            PUBLIC API
