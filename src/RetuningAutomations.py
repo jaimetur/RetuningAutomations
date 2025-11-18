@@ -533,7 +533,7 @@ def run_configuration_audit(
     allowed_n77_ssb_csv: Optional[str] = None,
     allowed_n77_arfcn_csv: Optional[str] = None,
 ) -> None:
-    module_name = "[Configuration Audit (Log Parser)]"
+    module_name = "[Configuration Audit]"
     print(f"{module_name} Running…")
     print(f"{module_name} Input folder: '{input_dir}'")
     if freq_filters_csv:
