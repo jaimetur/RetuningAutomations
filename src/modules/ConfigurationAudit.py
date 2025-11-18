@@ -805,349 +805,558 @@ class ConfigurationAudit:
         """
         rows: List[Dict[str, object]] = []
 
-        def add_row(category: str, metric: str, value: object, extra: str = "") -> None:
+        def add_row(
+                category: str,
+                subcategory: str,
+                metric: str,
+                value: object,
+                extra: str = "",
+        ) -> None:
             rows.append({
-                "Category": category,
+                "Category": category,  # NEW top-level category (NR Frequency Audit, etc.)
+                "SubCategory": subcategory,  # OLD 'Category' (NRCellDU, NRFrequency, ...)
                 "Metric": metric,
                 "Value": value,
                 "ExtraInfo": extra,
             })
 
-        # ----------------------------- N77 CELLS (NRCellDU / NRSectorCarrier) -----------------------------
-        try:
-            # NRCellDU: N77 cells by SSB
-            if df_nr_cell_du is not None and not df_nr_cell_du.empty:
-                node_col_nr = self._resolve_column_case_insensitive(df_nr_cell_du, ["NodeId"])
-                ssb_col = self._resolve_column_case_insensitive(df_nr_cell_du, ["ssbFrequency", "ssb", "arfcnSsb", "arfcn"])
-                if node_col_nr and ssb_col:
-                    work = df_nr_cell_du[[node_col_nr, ssb_col]].copy()
-                    work[node_col_nr] = work[node_col_nr].astype(str)
-                    work[ssb_col] = work[ssb_col].astype(str)
+        rows: List[Dict[str, object]] = []
 
-                    mask_n77 = work[ssb_col].map(self._is_n77_from_string)
-                    n77_nodes = sorted(set(work.loc[mask_n77, node_col_nr]))
-                    add_row(
-                        "NRCellDU",
-                        "N77 nodes (NRCellDU SSB starting with '6')",
-                        len(n77_nodes),
-                        ", ".join(n77_nodes),
-                    )
-
-                    # Cells with N77 SSB but not in allowed list (if provided)
-                    if self.ALLOWED_N77_SSB:
-                        invalid_mask = mask_n77 & ~work[ssb_col].map(self._is_allowed_n77_ssb)
-                        invalid_rows = work.loc[invalid_mask, [node_col_nr, ssb_col]]
-                        if not invalid_rows.empty:
-                            add_row(
-                                "NRCellDU",
-                                "N77 nodes with SSB not in allowed list",
-                                len(invalid_rows),
-                                "; ".join(
-                                    f"{r[node_col_nr]}: {r[ssb_col]}"
-                                    for _, r in invalid_rows.head(50).iterrows()
-                                ) + (" (truncated)" if len(invalid_rows) > 50 else ""),
-                            )
-                else:
-                    add_row("NRCellDU", "NRCellDU table present but required columns missing", "N/A")
-            else:
-                add_row("NRCellDU", "NRCellDU table", "Table not found or empty")
-        except Exception as ex:
-            add_row("NRCellDU", "Error while checking NRCellDU", f"ERROR: {ex}")
-
-        try:
-            # NRSectorCarrier: N77 sectors by ARFCN
-            if df_nr_sector_carrier is not None and not df_nr_sector_carrier.empty:
-                node_col_sec = self._resolve_column_case_insensitive(df_nr_sector_carrier, ["NodeId"])
-                arfcn_col_sec = self._resolve_column_case_insensitive(df_nr_sector_carrier, ["arfcnDL", "arfcn", "arfcnValueNRDl"])
-                if node_col_sec and arfcn_col_sec:
-                    work = df_nr_sector_carrier[[node_col_sec, arfcn_col_sec]].copy()
-                    work[node_col_sec] = work[node_col_sec].astype(str)
-                    work[arfcn_col_sec] = work[arfcn_col_sec].astype(str)
-
-                    mask_n77b = work[arfcn_col_sec].map(self._is_n77_from_string)
-                    n77b_nodes = sorted(set(work.loc[mask_n77b, node_col_sec]))
-                    add_row(
-                        "NRSectorCarrier",
-                        "N77 nodes with ARFCN starting with '6'",
-                        len(n77b_nodes),
-                        ", ".join(n77b_nodes),
-                    )
-
-                    if self.ALLOWED_N77_ARFCN:
-                        invalid_mask = mask_n77b & ~work[arfcn_col_sec].map(self._is_allowed_n77_arfcn)
-                        invalid_rows = work.loc[invalid_mask, [node_col_sec, arfcn_col_sec]]
-                        if not invalid_rows.empty:
-                            add_row(
-                                "NRSectorCarrier",
-                                "N77 nodes with ARFCN not in allowed list",
-                                len(invalid_rows),
-                                "; ".join(
-                                    f"{r[node_col_sec]}: {r[arfcn_col_sec]}"
-                                    for _, r in invalid_rows.head(50).iterrows()
-                                ) + (" (truncated)" if len(invalid_rows) > 50 else ""),
-                            )
-                else:
-                    add_row("NRSectorCarrier", "NRSectorCarrier table present but required columns missing", "N/A")
-            else:
-                add_row("NRSectorCarrier", "NRSectorCarrier table", "Table not found or empty")
-        except Exception as ex:
-            add_row("NRSectorCarrier", "Error while checking NRSectorCarrier", f"ERROR: {ex}")
+        def add_row(
+                category: str,
+                subcategory: str,
+                metric: str,
+                value: object,
+                extra: str = "",
+        ) -> None:
+            rows.append({
+                "Category": category,  # NEW top-level category (NR Frequency Audit, etc.)
+                "SubCategory": subcategory,  # OLD 'Category' (NRCellDU, NRFrequency, ...)
+                "Metric": metric,
+                "Value": value,
+                "ExtraInfo": extra,
+            })
 
         # ----------------------------- NR FREQUENCY (OLD/NEW ARFCN) -----------------------------
         try:
+            node_col = None
+            arfcn_col = None
+
             if df_nr_freq is not None and not df_nr_freq.empty:
                 node_col = self._resolve_column_case_insensitive(df_nr_freq, ["NodeId"])
-                arfcn_col = self._resolve_column_case_insensitive(df_nr_freq, ["arfcnValueNRDl"])
+                arfcn_col = self._resolve_column_case_insensitive(
+                    df_nr_freq,
+                    ["arfcnValueNRDl", "arfcn", "arfcnDL"],
+                )
+
                 if node_col and arfcn_col:
                     work = df_nr_freq[[node_col, arfcn_col]].copy()
                     work[node_col] = work[node_col].astype(str)
 
                     grouped = work.groupby(node_col)[arfcn_col]
-                    mask = grouped.apply(self._only_not_old_not_new)
-                    not_old_not_new_nodes = sorted(mask[mask].index.astype(str))
-                    new_nodes = sorted(set(work.loc[work[arfcn_col].map(self._is_new), node_col]))
-                    old_nodes = sorted(set(work.loc[work[arfcn_col].map(self._is_old), node_col]))
+
+                    # Nodos cuyos ARFCN son todos diferentes de old/new
+                    not_old_not_new_nodes = sorted(
+                        grouped.filter(self._only_not_old_not_new)[node_col]
+                        .unique()
+                        .astype(str)
+                    )
+                    new_nodes = sorted(
+                        set(work.loc[work[arfcn_col].map(self._is_new), node_col])
+                    )
+                    old_nodes = sorted(
+                        set(work.loc[work[arfcn_col].map(self._is_old), node_col])
+                    )
 
                     add_row(
+                        "NR Frequency Inconsistencies",
                         "NRFrequency",
                         f"N77 nodes with the ARFCN not in ({self.OLD_ARFCN}, {self.NEW_ARFCN}) in NRFrequency",
                         len(not_old_not_new_nodes),
                         ", ".join(not_old_not_new_nodes),
                     )
                     add_row(
+                        "NR Frequency Audit",
                         "NRFrequency",
                         f"N77 nodes with the old ARFCN ({self.OLD_ARFCN}) in NRFrequency",
                         len(old_nodes),
                         ", ".join(old_nodes),
                     )
                     add_row(
+                        "NR Frequency Audit",
                         "NRFrequency",
                         f"N77 nodes with the new ARFCN ({self.NEW_ARFCN}) in NRFrequency",
                         len(new_nodes),
                         ", ".join(new_nodes),
                     )
                 else:
-                    add_row("NRFrequency", "NRFrequency table present but required columns missing", "N/A")
+                    add_row(
+                        "NR Frequency Audit",
+                        "NRFrequency",
+                        "NRFrequency table present but required columns missing",
+                        "N/A",
+                    )
             else:
-                add_row("NRFrequency", "NRFrequency table", "Table not found or empty")
+                add_row(
+                    "NR Frequency Audit",
+                    "NRFrequency",
+                    "NRFrequency table",
+                    "Table not found or empty",
+                )
         except Exception as ex:
-            add_row("NRFrequency", "Error while checking NRFrequency", f"ERROR: {ex}")
+            add_row(
+                "NR Frequency Audit",
+                "NRFrequency",
+                "Error while checking NRFrequency",
+                f"ERROR: {ex}",
+            )
 
-        # ----------------------------- NR FREQRELATION (OLD/NEW ARFCN) -----------------------------
+
+        # ----------------------------- NRFreqRelation (OLD/NEW ARFCN) -----------------------------
         try:
+            node_col = None
+            arfcn_col = None
+
             if df_nr_freq_rel is not None and not df_nr_freq_rel.empty:
                 node_col = self._resolve_column_case_insensitive(df_nr_freq_rel, ["NodeId"])
-                arfcn_col = self._resolve_column_case_insensitive(df_nr_freq_rel, ["NRFreqRelationId"])
+                arfcn_col = self._resolve_column_case_insensitive(
+                    df_nr_freq_rel,
+                    ["NRFreqRelationId"],
+                )
+
                 if node_col and arfcn_col:
                     work = df_nr_freq_rel[[node_col, arfcn_col]].copy()
                     work[node_col] = work[node_col].astype(str)
 
                     grouped = work.groupby(node_col)[arfcn_col]
-                    mask = grouped.apply(self._only_not_old_not_new)
-                    not_old_not_new_nodes = sorted(mask[mask].index.astype(str))
-                    new_nodes = sorted(set(work.loc[work[arfcn_col].map(self._is_new), node_col]))
-                    old_nodes = sorted(set(work.loc[work[arfcn_col].map(self._is_old), node_col]))
+                    not_old_not_new_nodes = sorted(
+                        grouped.filter(self._only_not_old_not_new)[node_col]
+                        .unique()
+                        .astype(str)
+                    )
+                    new_nodes = sorted(
+                        set(work.loc[work[arfcn_col].map(self._is_new), node_col])
+                    )
+                    old_nodes = sorted(
+                        set(work.loc[work[arfcn_col].map(self._is_old), node_col])
+                    )
 
                     add_row(
+                        "NR Frequency Inconsistencies",
                         "NRFreqRelation",
                         f"N77 nodes with the ARFCN not in ({self.OLD_ARFCN}, {self.NEW_ARFCN}) in NRFreqRelation",
                         len(not_old_not_new_nodes),
                         ", ".join(not_old_not_new_nodes),
                     )
                     add_row(
+                        "NR Frequency Audit",
                         "NRFreqRelation",
                         f"NR nodes with the old ARFCN ({self.OLD_ARFCN}) in NRFreqRelation",
                         len(old_nodes),
                         ", ".join(old_nodes),
                     )
                     add_row(
+                        "NR Frequency Audit",
                         "NRFreqRelation",
-                        f"NR nodes with the old ARFCN ({self.NEW_ARFCN}) in NRFreqRelation",
+                        f"NR nodes with the new ARFCN ({self.NEW_ARFCN}) in NRFreqRelation",
                         len(new_nodes),
                         ", ".join(new_nodes),
                     )
-
                 else:
-                    add_row("NRFreqRelation", "NRFreqRelation table present but ARFCN column missing", "N/A")
+                    add_row(
+                        "NR Frequency Audit",
+                        "NRFreqRelation",
+                        "NRFreqRelation table present but ARFCN column missing",
+                        "N/A",
+                    )
             else:
-                add_row("NRFreqRelation", "NRFreqRelation table", "Table not found or empty")
+                add_row(
+                    "NR Frequency Audit",
+                    "NRFreqRelation",
+                    "NRFreqRelation table",
+                    "Table not found or empty",
+                )
         except Exception as ex:
-            add_row("NRFreqRelation", "Error while checking NRFreqRelation", f"ERROR: {ex}")
+            add_row(
+                "NR Frequency Audit",
+                "NRFreqRelation",
+                "Error while checking NRFreqRelation",
+                f"ERROR: {ex}",
+            )
 
-        # ----------------------------- LTE GUtranSyncSignalFrequency -----------------------------
+        # ----------------------------- LTE GUtranSyncSignalFrequency (OLD/NEW ARFCN) -----------------------------
         try:
+            node_col = None
+            arfcn_col = None
+
             if df_gu_sync_signal_freq is not None and not df_gu_sync_signal_freq.empty:
                 node_col = self._resolve_column_case_insensitive(df_gu_sync_signal_freq, ["NodeId"])
-                arfcn_col = self._resolve_column_case_insensitive(df_gu_sync_signal_freq, ["arfcn", "arfcnDL"])
+                arfcn_col = self._resolve_column_case_insensitive(
+                    df_gu_sync_signal_freq,
+                    ["arfcn", "arfcnDL"],
+                )
+
                 if node_col and arfcn_col:
                     work = df_gu_sync_signal_freq[[node_col, arfcn_col]].copy()
                     work[node_col] = work[node_col].astype(str)
 
                     grouped = work.groupby(node_col)[arfcn_col]
-                    mask = grouped.apply(self._only_not_old_not_new)
-                    not_old_not_new_nodes = sorted(mask[mask].index.astype(str))
-                    new_nodes = sorted(set(work.loc[work[arfcn_col].map(self._is_new), node_col]))
-                    old_nodes = sorted(set(work.loc[work[arfcn_col].map(self._is_old), node_col]))
+                    not_old_not_new_nodes = sorted(
+                        grouped.filter(self._only_not_old_not_new)[node_col]
+                        .unique()
+                        .astype(str)
+                    )
+                    new_nodes = sorted(
+                        set(work.loc[work[arfcn_col].map(self._is_new), node_col])
+                    )
+                    old_nodes = sorted(
+                        set(work.loc[work[arfcn_col].map(self._is_old), node_col])
+                    )
 
                     add_row(
+                        "Gutran Frequency Inconsistences",
                         "GUtranSyncSignalFrequency",
                         f"LTE nodes with the ARFCN not in ({self.OLD_ARFCN}, {self.NEW_ARFCN}) in GUtranSyncSignalFrequency",
                         len(not_old_not_new_nodes),
                         ", ".join(not_old_not_new_nodes),
                     )
                     add_row(
+                        "Gutran Frequency Audit",
                         "GUtranSyncSignalFrequency",
                         f"LTE nodes with the old ARFCN ({self.OLD_ARFCN}) in GUtranSyncSignalFrequency",
                         len(old_nodes),
                         ", ".join(old_nodes),
                     )
                     add_row(
+                        "Gutran Frequency Audit",
                         "GUtranSyncSignalFrequency",
                         f"LTE nodes with the new ARFCN ({self.NEW_ARFCN}) in GUtranSyncSignalFrequency",
                         len(new_nodes),
                         ", ".join(new_nodes),
                     )
                 else:
-                    add_row("GUtranSyncSignalFrequency", "GUtranSyncSignalFrequency table present but required columns missing", "N/A")
+                    add_row(
+                        "Gutran Frequency Audit",
+                        "GUtranSyncSignalFrequency",
+                        "GUtranSyncSignalFrequency table present but required columns missing",
+                        "N/A",
+                    )
             else:
-                add_row("GUtranSyncSignalFrequency", "GUtranSyncSignalFrequency table", "Table not found or empty")
+                add_row(
+                    "Gutran Frequency Audit",
+                    "GUtranSyncSignalFrequency",
+                    "GUtranSyncSignalFrequency table",
+                    "Table not found or empty",
+                )
         except Exception as ex:
-            add_row("GUtranSyncSignalFrequency", "Error while checking GUtranSyncSignalFrequency", f"ERROR: {ex}")
+            add_row(
+                "Gutran Frequency Audit",
+                "GUtranSyncSignalFrequency",
+                "Error while checking GUtranSyncSignalFrequency",
+                f"ERROR: {ex}",
+            )
 
-        # ----------------------------- LTE GUtranFreqRelation -----------------------------
+
+        # ----------------------------- LTE GUtranFreqRelation (OLD/NEW ARFCN) -----------------------------
         try:
+            node_col = None
+            arfcn_col = None
+
             if df_gu_freq_rel is not None and not df_gu_freq_rel.empty:
                 node_col = self._resolve_column_case_insensitive(df_gu_freq_rel, ["NodeId"])
-                arfcn_col = self._resolve_column_case_insensitive(df_gu_freq_rel, ["GUtranFreqRelationId", "gUtranFreqRelationId"])
+                arfcn_col = self._resolve_column_case_insensitive(
+                    df_gu_freq_rel,
+                    ["GUtranFreqRelationId", "gUtranFreqRelationId"],
+                )
+
                 if node_col and arfcn_col:
                     work = df_gu_freq_rel[[node_col, arfcn_col]].copy()
                     work[node_col] = work[node_col].astype(str)
 
                     grouped = work.groupby(node_col)[arfcn_col]
-                    mask = grouped.apply(self._only_not_old_not_new)
-                    not_old_not_new_nodes = sorted(mask[mask].index.astype(str))
-                    new_nodes = sorted(set(work.loc[work[arfcn_col].map(self._is_new), node_col]))
-                    old_nodes = sorted(set(work.loc[work[arfcn_col].map(self._is_old), node_col]))
+                    not_old_not_new_nodes = sorted(
+                        grouped.filter(self._only_not_old_not_new)[node_col]
+                        .unique()
+                        .astype(str)
+                    )
+                    new_nodes = sorted(
+                        set(work.loc[work[arfcn_col].map(self._is_new), node_col])
+                    )
+                    old_nodes = sorted(
+                        set(work.loc[work[arfcn_col].map(self._is_old), node_col])
+                    )
 
                     add_row(
+                        "Gutran Frequency Inconsistences",
                         "GUtranFreqRelation",
                         f"LTE nodes with the ARFCN not in ({self.OLD_ARFCN}, {self.NEW_ARFCN}) in GUtranFreqRelation",
                         len(not_old_not_new_nodes),
                         ", ".join(not_old_not_new_nodes),
                     )
                     add_row(
+                        "Gutran Frequency Audit",
                         "GUtranFreqRelation",
                         f"LTE nodes with the old ARFCN ({self.OLD_ARFCN}) in GUtranFreqRelation",
                         len(old_nodes),
                         ", ".join(old_nodes),
                     )
                     add_row(
+                        "Gutran Frequency Audit",
                         "GUtranFreqRelation",
                         f"LTE nodes with the new ARFCN ({self.NEW_ARFCN}) in GUtranFreqRelation",
                         len(new_nodes),
                         ", ".join(new_nodes),
                     )
-
                 else:
-                    add_row("GUtranFreqRelation", "GUtranFreqRelation table present but ARFCN/NodeId missing", "N/A")
+                    add_row(
+                        "Gutran Frequency Audit",
+                        "GUtranFreqRelation",
+                        "GUtranFreqRelation table present but ARFCN/NodeId missing",
+                        "N/A",
+                    )
             else:
-                add_row("GUtranFreqRelation", "GUtranFreqRelation table", "Table not found or empty")
+                add_row(
+                    "Gutran Frequency Audit",
+                    "GUtranFreqRelation",
+                    "GUtranFreqRelation table",
+                    "Table not found or empty",
+                )
         except Exception as ex:
-            add_row("GUtranFreqRelation", "Error while checking GUtranFreqRelation", f"ERROR: {ex}")
+            add_row(
+                "Gutran Frequency Audit",
+                "GUtranFreqRelation",
+                "Error while checking GUtranFreqRelation",
+                f"ERROR: {ex}",
+            )
 
         # ----------------------------- CARDINALITY LIMITS -----------------------------
-        # Max 16 NRFreqRelation and 16 GUtranFreqRelation per cell
+        # Max 16 NRFreqRelation per NR cell
         try:
             if df_nr_freq_rel is not None and not df_nr_freq_rel.empty:
-                cell_col = self._resolve_column_case_insensitive(df_nr_freq_rel, ["NRCellCUId", "NRCellId", "CellId"])
+                cell_col = self._resolve_column_case_insensitive(
+                    df_nr_freq_rel,
+                    ["NRCellCUId", "NRCellId", "CellId"],
+                )
                 if cell_col:
                     counts = df_nr_freq_rel[cell_col].value_counts(dropna=False)
                     max_count = int(counts.max()) if not counts.empty else 0
-                    over_limit = counts[counts >= 16]
+
+                    # Celdas con nº de relaciones >= límite (para mostrar en "Max ...")
+                    at_limit_or_above = counts[counts >= 16]
+                    # Celdas realmente por encima del límite
+                    over_limit = counts[counts > 16]
+
+                    # 1) Fila de máximo
                     add_row(
+                        "Cardinality Audit",
                         "Cardinality",
                         "Max NRFreqRelation per NR cell (limit 16)",
                         max_count,
+                        "; ".join(f"{idx}: {cnt}" for idx, cnt in at_limit_or_above.head(50).items())
+                        + (" (truncated)" if at_limit_or_above.size > 50 else ""),
+                    )
+
+                    # 2) Fila de inconsistencias (solo las que superan el límite)
+                    add_row(
+                        "Cardinality Inconsistencies",
+                        "Cardinality",
+                        "Nodes with #NRFreqRelation per NR cell above limit (16)",
+                        int(over_limit.size),
                         "; ".join(f"{idx}: {cnt}" for idx, cnt in over_limit.head(50).items())
-                        + (" (truncated)" if len(over_limit) > 50 else ""),
+                        + (" (truncated)" if over_limit.size > 50 else ""),
                     )
                 else:
-                    add_row("Cardinality", "NRFreqRelation per cell (required cell column missing)", "N/A")
+                    add_row(
+                        "Cardinality Audit",
+                        "Cardinality",
+                        "NRFreqRelation per cell (required cell column missing)",
+                        "N/A",
+                    )
             else:
-                add_row("Cardinality", "NRFreqRelation per cell", "Table not found or empty")
+                add_row(
+                    "Cardinality Audit",
+                    "Cardinality",
+                    "NRFreqRelation per cell",
+                    "Table not found or empty",
+                )
         except Exception as ex:
-            add_row("Cardinality", "Error while checking NRFreqRelation cardinality", f"ERROR: {ex}")
+            add_row(
+                "Cardinality Audit",
+                "Cardinality",
+                "Error while checking NRFreqRelation cardinality",
+                f"ERROR: {ex}",
+            )
 
+        # Max 16 GUtranFreqRelation per LTE cell
         try:
             if df_gu_freq_rel is not None and not df_gu_freq_rel.empty:
-                cell_col_gu = self._resolve_column_case_insensitive(df_gu_freq_rel, ["EUtranCellFDDId", "EUtranCellId", "CellId", "GUCellId"])
+                cell_col_gu = self._resolve_column_case_insensitive(
+                    df_gu_freq_rel,
+                    ["EUtranCellFDDId", "EUtranCellId", "CellId", "GUCellId"],
+                )
                 if cell_col_gu:
                     counts = df_gu_freq_rel[cell_col_gu].value_counts(dropna=False)
                     max_count = int(counts.max()) if not counts.empty else 0
-                    over_limit = counts[counts >= 16]
+
+                    at_limit_or_above = counts[counts >= 16]
+                    over_limit = counts[counts > 16]
+
                     add_row(
+                        "Cardinality Audit",
                         "Cardinality",
                         "Max GUtranFreqRelation per LTE cell (limit 16)",
                         max_count,
+                        "; ".join(f"{idx}: {cnt}" for idx, cnt in at_limit_or_above.head(50).items())
+                        + (" (truncated)" if at_limit_or_above.size > 50 else ""),
+                    )
+
+                    add_row(
+                        "Cardinality Inconsistencies",
+                        "Cardinality",
+                        "Nodes with #GUtranFreqRelation per LTE cell above limit (16)",
+                        int(over_limit.size),
                         "; ".join(f"{idx}: {cnt}" for idx, cnt in over_limit.head(50).items())
-                        + (" (truncated)" if len(over_limit) > 50 else ""),
+                        + (" (truncated)" if over_limit.size > 50 else ""),
                     )
                 else:
-                    add_row("Cardinality", "GUtranFreqRelation per LTE cell (required cell column missing)", "N/A")
+                    add_row(
+                        "Cardinality Audit",
+                        "Cardinality",
+                        "GUtranFreqRelation per LTE cell (required cell column missing)",
+                        "N/A",
+                    )
             else:
-                add_row("Cardinality", "GUtranFreqRelation per LTE cell", "Table not found or empty")
+                add_row(
+                    "Cardinality Audit",
+                    "Cardinality",
+                    "GUtranFreqRelation per LTE cell",
+                    "Table not found or empty",
+                )
         except Exception as ex:
-            add_row("Cardinality", "Error while checking GUtranFreqRelation cardinality", f"ERROR: {ex}")
+            add_row(
+                "Cardinality Audit",
+                "Cardinality",
+                "Error while checking GUtranFreqRelation cardinality",
+                f"ERROR: {ex}",
+            )
 
         # Max 24 GUtranSyncSignalFrequency per node
         try:
             if df_gu_sync_signal_freq is not None and not df_gu_sync_signal_freq.empty:
-                node_col = self._resolve_column_case_insensitive(df_gu_sync_signal_freq, ["NodeId"])
+                node_col = self._resolve_column_case_insensitive(
+                    df_gu_sync_signal_freq,
+                    ["NodeId"],
+                )
                 if node_col:
                     counts = df_gu_sync_signal_freq[node_col].astype(str).value_counts(dropna=False)
                     max_count = int(counts.max()) if not counts.empty else 0
-                    over_limit_nodes = counts[counts >= 24]
+
+                    at_limit_or_above = counts[counts >= 24]
+                    over_limit = counts[counts > 24]
+
                     add_row(
+                        "Cardinality Audit",
                         "Cardinality",
                         "Max GUtranSyncSignalFrequency definitions per node (limit 24)",
                         max_count,
-                        "; ".join(f"{idx}: {cnt}" for idx, cnt in over_limit_nodes.head(50).items())
-                        + (" (truncated)" if len(over_limit_nodes) > 50 else ""),
+                        "; ".join(f"{idx}: {cnt}" for idx, cnt in at_limit_or_above.head(50).items())
+                        + (" (truncated)" if at_limit_or_above.size > 50 else ""),
+                    )
+
+                    add_row(
+                        "Cardinality Inconsistencies",
+                        "Cardinality",
+                        "Nodes with #GUtranSyncSignalFrequency definitions per node above limit (24)",
+                        int(over_limit.size),
+                        "; ".join(f"{idx}: {cnt}" for idx, cnt in over_limit.head(50).items())
+                        + (" (truncated)" if over_limit.size > 50 else ""),
                     )
                 else:
-                    add_row("Cardinality", "GUtranSyncSignalFrequency per node (NodeId missing)", "N/A")
+                    add_row(
+                        "Cardinality Audit",
+                        "Cardinality",
+                        "GUtranSyncSignalFrequency per node (NodeId missing)",
+                        "N/A",
+                    )
             else:
-                add_row("Cardinality", "GUtranSyncSignalFrequency per node", "Table not found or empty")
+                add_row(
+                    "Cardinality Audit",
+                    "Cardinality",
+                    "GUtranSyncSignalFrequency per node",
+                    "Table not found or empty",
+                )
         except Exception as ex:
-            add_row("Cardinality", "Error while checking GUtranSyncSignalFrequency cardinality", f"ERROR: {ex}")
+            add_row(
+                "Cardinality Audit",
+                "Cardinality",
+                "Error while checking GUtranSyncSignalFrequency cardinality",
+                f"ERROR: {ex}",
+            )
 
         # Max 64 NRFrequency per node
         try:
             if df_nr_freq is not None and not df_nr_freq.empty:
-                node_col = self._resolve_column_case_insensitive(df_nr_freq, ["NodeId"])
+                node_col = self._resolve_column_case_insensitive(
+                    df_nr_freq,
+                    ["NodeId"],
+                )
                 if node_col:
                     counts = df_nr_freq[node_col].astype(str).value_counts(dropna=False)
                     max_count = int(counts.max()) if not counts.empty else 0
-                    over_limit_nodes = counts[counts >= 64]
+
+                    at_limit_or_above = counts[counts >= 64]
+                    over_limit = counts[counts > 64]
+
                     add_row(
+                        "Cardinality Audit",
                         "Cardinality",
                         "Max NRFrequency definitions per node (limit 64)",
                         max_count,
-                        "; ".join(f"{idx}: {cnt}" for idx, cnt in over_limit_nodes.head(50).items())
-                        + (" (truncated)" if len(over_limit_nodes) > 50 else ""),
+                        "; ".join(f"{idx}: {cnt}" for idx, cnt in at_limit_or_above.head(50).items())
+                        + (" (truncated)" if at_limit_or_above.size > 50 else ""),
+                    )
+
+                    add_row(
+                        "Cardinality Inconsistencies",
+                        "Cardinality",
+                        "Nodes with #NRFrequency definitions per node above limit (64)",
+                        int(over_limit.size),
+                        "; ".join(f"{idx}: {cnt}" for idx, cnt in over_limit.head(50).items())
+                        + (" (truncated)" if over_limit.size > 50 else ""),
                     )
                 else:
-                    add_row("Cardinality", "NRFrequency per node (NodeId missing)", "N/A")
+                    add_row(
+                        "Cardinality Audit",
+                        "Cardinality",
+                        "NRFrequency per node (NodeId missing)",
+                        "N/A",
+                    )
             else:
-                add_row("Cardinality", "NRFrequency per node", "Table not found or empty")
+                add_row(
+                    "Cardinality Audit",
+                    "Cardinality",
+                    "NRFrequency per node",
+                    "Table not found or empty",
+                )
         except Exception as ex:
-            add_row("Cardinality", "Error while checking NRFrequency cardinality", f"ERROR: {ex}")
+            add_row(
+                "Cardinality Audit",
+                "Cardinality",
+                "Error while checking NRFrequency cardinality",
+                f"ERROR: {ex}",
+            )
 
         # ----------------------------- EndcDistrProfile gUtranFreqRef -----------------------------
         try:
             if df_endc_distr_profile is not None and not df_endc_distr_profile.empty:
-                node_col_edp = self._resolve_column_case_insensitive(df_endc_distr_profile, ["NodeId"])
-                ref_col = self._resolve_column_case_insensitive(df_endc_distr_profile, ["gUtranFreqRef"])
+                node_col_edp = self._resolve_column_case_insensitive(
+                    df_endc_distr_profile,
+                    ["NodeId"],
+                )
+                ref_col = self._resolve_column_case_insensitive(
+                    df_endc_distr_profile,
+                    ["gUtranFreqRef"],
+                )
                 if node_col_edp and ref_col:
                     work = df_endc_distr_profile[[node_col_edp, ref_col]].copy()
                     work[node_col_edp] = work[node_col_edp].astype(str)
@@ -1156,14 +1365,15 @@ class ConfigurationAudit:
                     def _normalize_ref(s: str) -> str:
                         return str(s).replace(" ", "").strip()
 
-                    # Expected pattern is always NEW&other (or equivalent with comma/dash)
-                    # We only check that the normalized string contains the numeric NEW_ARFCN at least once.
                     expected_str = str(self.NEW_ARFCN)
 
-                    bad_mask = ~work[ref_col].map(lambda v: expected_str in _normalize_ref(v))
+                    bad_mask = ~work[ref_col].map(
+                        lambda v: expected_str in _normalize_ref(v)
+                    )
                     bad_rows = work.loc[bad_mask, [node_col_edp, ref_col]]
 
                     add_row(
+                        "EndcDistrProfile Audit",
                         "EndcDistrProfile",
                         f"EndcDistrProfile rows with gUtranFreqRef not containing {self.NEW_ARFCN}",
                         len(bad_rows),
@@ -1173,60 +1383,88 @@ class ConfigurationAudit:
                         ) + (" (truncated)" if len(bad_rows) > 50 else ""),
                     )
                 else:
-                    add_row("EndcDistrProfile", "EndcDistrProfile table present but NodeId/gUtranFreqRef missing", "N/A")
+                    add_row(
+                        "EndcDistrProfile Audit",
+                        "EndcDistrProfile",
+                        "EndcDistrProfile table present but NodeId/gUtranFreqRef missing",
+                        "N/A",
+                    )
             else:
-                add_row("EndcDistrProfile", "EndcDistrProfile table", "Table not found or empty")
+                add_row(
+                    "EndcDistrProfile Audit",
+                    "EndcDistrProfile",
+                    "EndcDistrProfile table",
+                    "Table not found or empty",
+                )
         except Exception as ex:
-            add_row("EndcDistrProfile", "Error while checking EndcDistrProfile gUtranFreqRef", f"ERROR: {ex}")
+            add_row(
+                "EndcDistrProfile Audit",
+                "EndcDistrProfile",
+                "Error while checking EndcDistrProfile gUtranFreqRef",
+                f"ERROR: {ex}",
+            )
 
         # If nothing was added, return at least an informational row
         if not rows:
             rows.append({
                 "Category": "Info",
+                "SubCategory": "Info",
                 "Metric": "SummaryAudit",
                 "Value": "No data available",
                 "ExtraInfo": "",
             })
 
-        return pd.DataFrame(rows)
+        df = pd.DataFrame(rows)
+
+        # Orden: Category (Z→A), SubCategory (Z→A), Metric (A→Z)
+        if not df.empty and all(col in df.columns for col in ["Category", "SubCategory", "Metric"]):
+            df = df.sort_values(
+                by=["Category", "SubCategory", "Metric"],
+                ascending=[False, False, True],
+                kind="mergesort",  # estable, mantiene orden relativo
+            ).reset_index(drop=True)
+
+        return df
 
     # =====================================================================
     #                     PRIVATE HELPERS (Summary → PPT)
     # =====================================================================
     @staticmethod
-    def _build_text_summary_structure(summary_audit_df: pd.DataFrame) -> Dict[str, List[str]]:
+    def _build_text_summary_structure(summary_audit_df: pd.DataFrame) -> Dict[str, List[Dict[str, object]]]:
         """
-        Transform SummaryAudit rows into a dict structure suitable for PPT generation.
-
+        Group SummaryAudit rows by top-level Category, keeping SubCategory/Metric/Value/ExtraInfo.
         Returns:
           {
-            "Category1": [
-                "Metric1: value | extra",
-                "Metric2: value | extra",
+            "NR Frequency Audit": [
+                {"SubCategory": "NRCellDU", "Metric": "...", "Value": 4, "ExtraInfo": "..."},
                 ...
             ],
-            "Category2": [
+            "NR Frequency Inconsistencies": [
                 ...
             ],
+            ...
           }
         """
-        sections: Dict[str, List[str]] = {}
+        sections: Dict[str, List[Dict[str, object]]] = {}
 
         if summary_audit_df is None or summary_audit_df.empty:
-            sections["Info"] = ["No audit data available to build textual summary"]
+            sections["Info"] = [{
+                "SubCategory": "Info",
+                "Metric": "No audit data available to build textual summary",
+                "Value": "",
+                "ExtraInfo": "",
+            }]
             return sections
 
         for _, row in summary_audit_df.iterrows():
             category = str(row.get("Category", "") or "Info")
-            metric = str(row.get("Metric", "") or "")
-            value = row.get("Value", "")
-            extra = str(row.get("ExtraInfo", "") or "")
-
-            base_line = f"{metric}: {value}"
-            if extra:
-                base_line = f"{base_line} | {extra}"
-
-            sections.setdefault(category, []).append(base_line)
+            item = {
+                "SubCategory": str(row.get("SubCategory", "") or ""),
+                "Metric": str(row.get("Metric", "") or ""),
+                "Value": row.get("Value", ""),
+                "ExtraInfo": str(row.get("ExtraInfo", "") or ""),
+            }
+            sections.setdefault(category, []).append(item)
 
         return sections
 
@@ -1237,49 +1475,43 @@ class ConfigurationAudit:
             module_name: str = "",
     ) -> Optional[str]:
         """
-        Generate a PPTX file next to the Excel with slides per Category from SummaryAudit.
+        Generate a PPTX file next to the Excel with slides grouped by top-level Category.
 
         - First slide: global title.
         - Then, for each Category:
-            • One or more slides.
-            • Slide title = Category
-            • Body:
-                - Main bullet (font size 14 pt): "Metric: Value"
-                - Secondary bullets (font size 10 pt): one per cell/node/sector
-                  that appears after the '|' separator.
-                - Secondary bullets are arranged in two columns:
-                    · Max 25 items per column (50 per slide).
-                    · If there are more than 50 items, a new slide is created
-                      for the remaining items (repeating the same main bullet).
+
+            • If Category name contains 'audit' (case-insensitive):
+                - Single slide per Category.
+                - Title = Category.
+                - Body = one bullet per row: "Metric: Value" (no node list).
+
+            • If Category name contains 'inconsist' (case-insensitive):
+                - Single slide per Category.
+                - Title = Category.
+                - Body:
+                    · For each row: main bullet "Metric: Value".
+                    · Under each row, level-1 bullets with the node list
+                      parsed from ExtraInfo (comma/semicolon separated).
         """
-        # Late import to avoid hard dependency if pptx is not installed
         try:
             from pptx import Presentation
-            from pptx.util import Pt, Inches
+            from pptx.util import Pt
         except ImportError:
             print(f"{module_name} [INFO] python-pptx is not installed. Skipping PPT summary.")
             return None
 
-        # Font sizes for different bullet levels
         MAIN_BULLET_SIZE = Pt(14)
         SUB_BULLET_SIZE = Pt(10)
 
         sections = self._build_text_summary_structure(summary_audit_df)
 
-        # Derive PPT path from Excel path
         base, _ = os.path.splitext(excel_path)
         ppt_path = base + "_Summary.pptx"
 
-        # Helper: set font size for all runs in a paragraph
         def _set_paragraph_font_size(paragraph, size: Pt) -> None:
             for run in paragraph.runs:
                 run.font.size = size
 
-        # Helper: chunk a list into pieces of maximum 'size' elements
-        def _chunk_list(items: List[str], size: int) -> List[List[str]]:
-            return [items[i:i + size] for i in range(0, len(items), size)]
-
-        # Load user template instead of default blank PPT
         template_path = get_resource_path("ppt_templates/ConfigurationAuditTemplate.pptx")
         try:
             prs = Presentation(template_path)
@@ -1288,13 +1520,10 @@ class ConfigurationAudit:
             print(f"{module_name} [WARN] Could not load PPT template, using default. ({e})")
             prs = Presentation()
 
-        # Find appropriate layouts inside the template
-        # You may adjust indices depending on your template
         try:
-            title_slide_layout = prs.slide_layouts[0]  # Title layout of your template
-            content_layout = prs.slide_layouts[2]  # Title + content layout of your template
-        except:
-            # Fallback to default mapping
+            title_slide_layout = prs.slide_layouts[0]
+            content_layout = prs.slide_layouts[2]
+        except Exception:
             title_slide_layout = prs.slide_layouts[0]
             content_layout = prs.slide_layouts[1]
 
@@ -1307,169 +1536,98 @@ class ConfigurationAudit:
         if subtitle is not None:
             subtitle.text = os.path.basename(excel_path)
 
-        # --- Category slides ---
-        for category, lines in sections.items():
-            # If there are no lines for this category, create a single simple slide
-            if not lines:
-                slide = prs.slides.add_slide(content_layout)
-                title_shape = slide.shapes.title
-                body = slide.placeholders[1] if len(slide.placeholders) > 1 else None
+        # --- One slide per Category ---
+        for category, items in sections.items():
+            slide = prs.slides.add_slide(content_layout)
+            title_shape = slide.shapes.title
+            body = slide.placeholders[1] if len(slide.placeholders) > 1 else None
 
-                title_shape.text = category
+            title_shape.text = category
 
-                if body is None:
-                    continue
+            if body is None:
+                continue
 
-                tf = body.text_frame
-                tf.clear()
+            tf = body.text_frame
+            tf.clear()
+
+            if not items:
                 p = tf.paragraphs[0]
                 p.text = "No data available for this category."
                 p.level = 0
                 _set_paragraph_font_size(p, MAIN_BULLET_SIZE)
                 continue
 
-            # For each logical line: "Metric: Value | Node1, Node2, Node3, ..."
-            # we may create multiple slides if there are many nodes.
-            for line in lines:
-                raw_text = line or ""
+            cat_lower = category.lower()
+            is_audit = "audit" in cat_lower
+            is_incons = "inconsist" in cat_lower  # covers 'Inconsistences' typo as well
 
-                # Split main text and node list by '|'
-                if "|" in raw_text:
-                    main_text, extra_text = raw_text.split("|", 1)
-                    main_text = main_text.strip()
-                    extra_text = extra_text.strip()
-                else:
-                    main_text = raw_text.strip()
-                    extra_text = ""
+            if is_audit:
+                # Only "Metric: Value" bullets
+                for idx, item in enumerate(items):
+                    metric = item.get("Metric", "")
+                    value = item.get("Value", "")
+                    text = f"{metric}: {value}"
 
-                # If there is no extra_text, just one simple slide with a main bullet
-                if not extra_text:
-                    slide = prs.slides.add_slide(content_layout)
-                    title_shape = slide.shapes.title
-                    body = slide.placeholders[1] if len(slide.placeholders) > 1 else None
+                    if idx == 0:
+                        p = tf.paragraphs[0]
+                    else:
+                        p = tf.add_paragraph()
 
-                    title_shape.text = category
+                    p.text = text
+                    p.level = 0
+                    _set_paragraph_font_size(p, MAIN_BULLET_SIZE)
 
-                    if body is None:
-                        continue
+            elif is_incons:
+                # Metric + Value as main bullets; node list as level-1 bullets
+                first = True
+                for item in items:
+                    metric = item.get("Metric", "")
+                    value = item.get("Value", "")
+                    extra = item.get("ExtraInfo", "")
 
-                    tf = body.text_frame
-                    tf.clear()
-                    p_main = tf.paragraphs[0]
-                    p_main.text = main_text if main_text else "No data available for this category."
-                    p_main.level = 0
-                    _set_paragraph_font_size(p_main, MAIN_BULLET_SIZE)
-                    continue
+                    main_text = f"{metric}: {value}"
 
-                # There is extra_text: build the list of secondary items (nodes/cells/sectors)
-                cleaned_extra = extra_text.replace(";", ",")
-                items = [t.strip() for t in cleaned_extra.split(",") if t.strip()]
+                    if first:
+                        p_main = tf.paragraphs[0]
+                        first = False
+                    else:
+                        p_main = tf.add_paragraph()
 
-                if not items:
-                    # Fallback: treat as no extra_text
-                    slide = prs.slides.add_slide(content_layout)
-                    title_shape = slide.shapes.title
-                    body = slide.placeholders[1] if len(slide.placeholders) > 1 else None
-
-                    title_shape.text = category
-
-                    if body is None:
-                        continue
-
-                    tf = body.text_frame
-                    tf.clear()
-                    p_main = tf.paragraphs[0]
-                    p_main.text = main_text if main_text else "No data available for this category."
-                    p_main.level = 0
-                    _set_paragraph_font_size(p_main, MAIN_BULLET_SIZE)
-                    continue
-
-                # Now we have a non-empty list of secondary items.
-                # We will:
-                #   - Split items into chunks of 50 (max per slide).
-                #   - For each chunk:
-                #       · Use main placeholder for the main bullet.
-                #       · Create two columns of up to 25 items each (secondary bullets).
-                chunks_of_50 = _chunk_list(items, 50)
-
-                for chunk_index, chunk_items in enumerate(chunks_of_50):
-                    slide = prs.slides.add_slide(content_layout)
-                    title_shape = slide.shapes.title
-                    body = slide.placeholders[1] if len(slide.placeholders) > 1 else None
-
-                    title_shape.text = category
-
-                    if body is None:
-                        continue
-
-                    # Main bullet in placeholder
-                    tf_main = body.text_frame
-                    tf_main.clear()
-                    p_main = tf_main.paragraphs[0]
-                    p_main.text = main_text if main_text else "No data available for this category."
+                    p_main.text = main_text
                     p_main.level = 0
                     _set_paragraph_font_size(p_main, MAIN_BULLET_SIZE)
 
-                    # Split secondary items into two columns: 25 max each
-                    col1_items = chunk_items[:25]
-                    col2_items = chunk_items[25:]
+                    if extra:
+                        cleaned_extra = str(extra).replace(";", ",")
+                        nodes = [t.strip() for t in cleaned_extra.split(",") if t.strip()]
 
-                    # Coordinates for the two columns
-                    left_margin = Inches(0.8)
-                    top = Inches(2.0)
-                    col_width = Inches(4.0)
-                    col_height = Inches(4.0)
-                    gap_between_cols = Inches(0.3)
+                        for node in nodes[:50]:
+                            p_node = tf.add_paragraph()
+                            p_node.text = f"- {node}"
+                            p_node.level = 1
+                            _set_paragraph_font_size(p_node, SUB_BULLET_SIZE)
 
-                    # Left column
-                    if col1_items:
-                        tx_box1 = slide.shapes.add_textbox(
-                            left_margin,
-                            top,
-                            col_width,
-                            col_height,
-                        )
-                        tf1 = tx_box1.text_frame
-                        tf1.clear()
+                        if len(nodes) > 50:
+                            p_node = tf.add_paragraph()
+                            p_node.text = "... (truncated)"
+                            p_node.level = 1
+                            _set_paragraph_font_size(p_node, SUB_BULLET_SIZE)
 
-                        first = True
-                        for item in col1_items:
-                            bullet_text = f"- {item}"
-                            if first:
-                                p = tf1.paragraphs[0]
-                                p.text = bullet_text
-                                first = False
-                            else:
-                                p = tf1.add_paragraph()
-                                p.text = bullet_text
+            else:
+                # Fallback: behave like audit
+                for idx, item in enumerate(items):
+                    metric = item.get("Metric", "")
+                    value = item.get("Value", "")
+                    text = f"{metric}: {value}"
 
-                            p.level = 1  # secondary bullet
-                            _set_paragraph_font_size(p, SUB_BULLET_SIZE)
+                    if idx == 0:
+                        p = tf.paragraphs[0]
+                    else:
+                        p = tf.add_paragraph()
 
-                    # Right column
-                    if col2_items:
-                        tx_box2 = slide.shapes.add_textbox(
-                            left_margin + col_width + gap_between_cols,
-                            top,
-                            col_width,
-                            col_height,
-                        )
-                        tf2 = tx_box2.text_frame
-                        tf2.clear()
-
-                        first = True
-                        for item in col2_items:
-                            bullet_text = f"- {item}"
-                            if first:
-                                p = tf2.paragraphs[0]
-                                p.text = bullet_text
-                                first = False
-                            else:
-                                p = tf2.add_paragraph()
-                                p.text = bullet_text
-
-                            p.level = 1  # secondary bullet
-                            _set_paragraph_font_size(p, SUB_BULLET_SIZE)
+                    p.text = text
+                    p.level = 0
+                    _set_paragraph_font_size(p, MAIN_BULLET_SIZE)
 
         prs.save(ppt_path)
         return ppt_path
