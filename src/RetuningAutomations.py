@@ -10,21 +10,9 @@ Main launcher with GUI/CLI to run one of:
 Behavior:
 - If run with NO args, opens a single Tkinter window to choose module,
   input folder(s), and (optionally) frequencies (with defaults).
-- If run with CLI args, behaves headless (unless you omit required fields, then
-  will try GUI unless --no-gui).
-
-NEW:
-- When the user selects the SECOND item in the module combobox (index 1),
-  the GUI switches to a dual-input layout asking for two folders:
-    • Pre input folder
-    • Post input folder
-  The launcher will pass BOTH folders to the module call.
-- For any other module, the GUI shows the classic single input folder.
-- CLI now accepts --input-pre and --input-post for the consistency-check module.
-
-NEW (ARFCN lists):
-- Allowed N77 SSB and Allowed N77 ARFCN can now be configured from CLI
-  (via --allowed-ssb-n77 / --allowed-n77-arfcn) or from GUI (two CSV fields).
+- If run with CLI args, behaves headless:
+    • requires --module
+    • uses provided args or persisted defaults (config.cfg) if missing.
 """
 
 import argparse
@@ -50,8 +38,8 @@ from src.modules.CleanUp.FinalCleanUp import FinalCleanUp
 # ================================ VERSIONING ================================ #
 
 TOOL_NAME           = "RetuningAutomations"
-TOOL_VERSION        = "0.2.9"
-TOOL_DATE           = "2025-11-18"
+TOOL_VERSION        = "0.3.0"
+TOOL_DATE           = "2025-11-19"
 TOOL_NAME_VERSION   = f"{TOOL_NAME}_v{TOOL_VERSION}"
 COPYRIGHT_TEXT      = "(c) 2025 - Jaime Tur (jaime.tur@ericsson.com)"
 TOOL_DESCRIPTION    = textwrap.dedent(f"""
@@ -70,7 +58,7 @@ INPUT_FOLDER_POST = ""  # default Post folder for dual-input GUI (empty by defau
 DEFAULT_FREQ_PRE = "648672"
 DEFAULT_FREQ_POST = "647328"
 
-# NEW: Default N77B SSB frequency (can be empty if not used)
+# NEW: Default N77B SSB frequency
 DEFAULT_N77B_SSB = "653952"
 
 # Default ARFCN lists (CSV) for ConfigurationAudit
@@ -106,11 +94,12 @@ CONFIG_SECTION = "general"
 CONFIG_KEY_LAST_INPUT = "last_input_dir"
 CONFIG_KEY_LAST_INPUT_PRE = "last_input_dir_pre"
 CONFIG_KEY_LAST_INPUT_POST = "last_input_dir_post"
-CONFIG_KEY_N77B_SSB = "n77b_ssb_freq"  # NEW: persist N77B SSB frequency
+CONFIG_KEY_FREQ_PRE = "freq_pre"
+CONFIG_KEY_FREQ_POST = "freq_post"
+CONFIG_KEY_N77B_SSB = "n77b_ssb_freq"  # persist N77B SSB frequency
 CONFIG_KEY_FREQ_FILTERS = "summary_freq_filters"  # comma-separated persistence for filters
-CONFIG_KEY_ALLOWED_N77_SSB = "allowed_n77_ssb_csv"       # NEW: persist N77 SSB list
-CONFIG_KEY_ALLOWED_N77_ARFCN = "allowed_n77_arfcn_csv" # NEW: persist N77 ARFCN list
-
+CONFIG_KEY_ALLOWED_N77_SSB = "allowed_n77_ssb_csv"
+CONFIG_KEY_ALLOWED_N77_ARFCN = "allowed_n77_arfcn_csv"
 
 # ============================== LOGGING SYSTEM ============================== #
 class LoggerDual:
@@ -161,6 +150,7 @@ class GuiResult:
     allowed_n77_ssb_csv: str
     allowed_n77_arfcn_csv: str
 
+
 def _normalize_csv_list(text: str) -> str:
     """Normalize a comma-separated text into 'a,b,c' without extra spaces/empties."""
     if not text:
@@ -180,7 +170,6 @@ def _is_consistency_module(selected_text: str) -> bool:
         idx = MODULE_NAMES.index(selected_text)
         return idx == 1
     except ValueError:
-        # If not found (custom text?), fallback to comparing lowercased forms
         lowered = selected_text.strip().lower()
         return lowered.startswith("2.") or "consistency" in lowered
 
@@ -196,19 +185,17 @@ def gui_config_dialog(
     default_allowed_n77_arfcn_csv: str = DEFAULT_ALLOWED_N77_ARFCN_CSV,
     default_n77b_ssb: str = DEFAULT_N77B_SSB,
 ) -> Optional[GuiResult]:
-
     """
     Opens a single modal window with:
       - Combobox (module)
       - Either:
          • Single input folder (entry + Browse), or
          • Dual input folders (Pre + Post, each with Browse)
-        The layout auto-switches when the SECOND module is selected.
-      - Freq Pre (entry)
-      - Freq Post (entry)
+      - N77 SSB Frequency (Pre/Post)
+      - N77B SSB Frequency
       - Multi-select list for Summary Frequency Filters (persisted)
       - CSV fields for:
-         • Allowed N77 SSB  list
+         • Allowed N77 SSB list
          • Allowed N77 ARFCN list
       - Run / Cancel
 
@@ -297,7 +284,6 @@ def gui_config_dialog(
 
     # Initially show single or dual depending on default selection
     def _refresh_input_mode(*_e):
-        # Hide both, then show the appropriate one
         single_frame.grid_forget()
         dual_frame.grid_forget()
         if _is_consistency_module(module_var.get()):
@@ -329,15 +315,12 @@ def gui_config_dialog(
     list_frame.grid(row=7, column=0, columnspan=1, sticky="nsw", **pad_tight)
     ttk.Label(list_frame, text="Available frequencies:").pack(anchor="w")
 
-    # Frame that holds the Listbox and Scrollbar
     lb_container = ttk.Frame(list_frame)
     lb_container.pack(fill="both", expand=True)
 
-    # Scrollbar
     scrollbar = ttk.Scrollbar(lb_container, orient="vertical")
     scrollbar.pack(side="right", fill="y")
 
-    # Listbox linked to the scrollbar
     lb = tk.Listbox(
         lb_container,
         selectmode="extended",
@@ -366,7 +349,6 @@ def gui_config_dialog(
         return [s.strip() for s in _normalize_csv_list(selected_csv_var.get()).split(",") if s.strip()]
 
     def add_selected():
-        # Append highlighted items from listbox into the CSV entry (unique)
         chosen = [lb.get(i) for i in lb.curselection()]
         pool = set(_current_selected_set())
         for c in chosen:
@@ -374,7 +356,6 @@ def gui_config_dialog(
         selected_csv_var.set(",".join(sorted(pool)))
 
     def remove_selected():
-        # Remove highlighted items from listbox from the CSV entry
         chosen = set([lb.get(i) for i in lb.curselection()])
         pool = [x for x in _current_selected_set() if x not in chosen]
         selected_csv_var.set(",".join(pool))
@@ -409,7 +390,7 @@ def gui_config_dialog(
         row=11, column=1, columnspan=2, sticky="ew", **pad
     )
 
-    # Row 11: Buttons
+    # Buttons
     btns = ttk.Frame(frm)
     btns.grid(row=12, column=0, columnspan=3, sticky="e", **pad)
 
@@ -421,7 +402,6 @@ def gui_config_dialog(
         normalized_allowed_n77_ssb = _normalize_csv_list(allowed_n77_ssb_var.get())
         normalized_allowed_n77_arfcn = _normalize_csv_list(allowed_n77_arfcn_var.get())
 
-        # Validate inputs depending on the selected module
         if _is_consistency_module(sel_module):
             sel_input_pre = input_pre_var.get().strip()
             sel_input_post = input_post_var.get().strip()
@@ -430,12 +410,12 @@ def gui_config_dialog(
                 return
             result = GuiResult(
                 module=sel_module,
-                input_dir="",  # not used in dual-input mode
+                input_dir="",
                 input_pre_dir=sel_input_pre,
                 input_post_dir=sel_input_post,
                 freq_pre=pre_var.get().strip(),
                 freq_post=post_var.get().strip(),
-                n77b_ssb_freq=n77b_ssb_var.get().strip(),  # NEW
+                n77b_ssb_freq=n77b_ssb_var.get().strip(),
                 freq_filters_csv=_normalize_csv_list(selected_csv_var.get()),
                 allowed_n77_ssb_csv=normalized_allowed_n77_ssb,
                 allowed_n77_arfcn_csv=normalized_allowed_n77_arfcn,
@@ -452,7 +432,7 @@ def gui_config_dialog(
                 input_post_dir="",
                 freq_pre=pre_var.get().strip(),
                 freq_post=post_var.get().strip(),
-                n77b_ssb_freq=n77b_ssb_var.get().strip(),  # NEW
+                n77b_ssb_freq=n77b_ssb_var.get().strip(),
                 freq_filters_csv=_normalize_csv_list(selected_csv_var.get()),
                 allowed_n77_ssb_csv=normalized_allowed_n77_ssb,
                 allowed_n77_arfcn_csv=normalized_allowed_n77_arfcn,
@@ -479,7 +459,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--module",
         choices=["configuration-audit", "consistency-check", "initial-cleanup", "final-cleanup"],
-        help="Module to run: configuration-audit|consistency-check|initial-cleanup|final-cleanup. If omitted, GUI appears (unless --no-gui)."
+        help="Module to run: configuration-audit|consistency-check|initial-cleanup|final-cleanup. "
+             "If omitted and no other args are provided, GUI appears (if available)."
     )
     # Single-input (most modules)
     parser.add_argument("-i", "--input", help="Input folder to process (single-input modules)")
@@ -490,14 +471,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--freq-pre", help="Frequency before refarming (Pre)")
     parser.add_argument("--freq-post", help="Frequency after refarming (Post)")
     parser.add_argument("--freq-n77b-ssb", help="N77B SSB frequency (ARFCN).")
-    parser.add_argument("--freq-filters", help="Comma-separated list of frequencies to filter pivot columns in Configuration Audit (substring match per column header).")
+    parser.add_argument(
+        "--freq-filters",
+        help="Comma-separated list of frequencies to filter pivot columns in Configuration Audit "
+             "(substring match per column header)."
+    )
 
-    # NEW: ARFCN list options for ConfigurationAudit
-    parser.add_argument("--allowed-n77-ssb", help="Comma-separated ARFCN list for N77 SSB allowed values (Configuration Audit).")
-    parser.add_argument("--allowed-n77-arfcn", help="Comma-separated ARFCN list for N77 ARFCN allowed values (Configuration Audit).")
+    # ARFCN list options for ConfigurationAudit
+    parser.add_argument(
+        "--allowed-n77-ssb",
+        help="Comma-separated ARFCN list for N77 SSB allowed values (Configuration Audit)."
+    )
+    parser.add_argument(
+        "--allowed-n77-arfcn",
+        help="Comma-separated ARFCN list for N77 ARFCN allowed values (Configuration Audit)."
+    )
 
-    parser.add_argument("--no-gui", action="store_true", help="Disable GUI prompts (require CLI args)")
-    return parser.parse_args()
+    parser.add_argument("--no-gui", action="store_true", help="Disable GUI usage (only CLI).")
+
+    args = parser.parse_args()
+    # Attach parser so we can print help from main()
+    setattr(args, "_parser", parser)
+    return args
 
 
 # ============================== RUNNERS (TASKS) ============================= #
@@ -525,7 +520,6 @@ def _parse_arfcn_csv_to_set(
                 print(f"[Configuration Audit] [WARN] Ignoring invalid ARFCN '{tok}' in {label} list.")
 
     if not values:
-        # Fallback to defaults
         return set(default_values)
 
     return set(values)
@@ -538,7 +532,7 @@ def run_configuration_audit(
     freq_post: Optional[str] = None,
     allowed_n77_ssb_csv: Optional[str] = None,
     allowed_n77_arfcn_csv: Optional[str] = None,
-    n77b_ssb_freq: Optional[str] = None,  # NEW
+    n77b_ssb_freq: Optional[str] = None,
 ) -> None:
 
     module_name = "[Configuration Audit]"
@@ -548,7 +542,6 @@ def run_configuration_audit(
         print(f"{module_name} Summary column filters: {freq_filters_csv}")
 
     # Determine ARFCN-related parameters for ConfigurationAudit using GUI/CLI frequencies
-    # This allows the user to change new/old ARFCN values without touching the class internals.
     try:
         old_arfcn = int(freq_pre) if freq_pre else int(DEFAULT_FREQ_PRE)
     except ValueError:
@@ -568,11 +561,7 @@ def run_configuration_audit(
             print(f"{module_name} [WARN] Invalid N77B SSB frequency '{n77b_ssb_freq}'. Ignoring.")
             n77b_ssb_arfcn = None
 
-
     # Build allowed sets from CSV (or fall back to defaults that include new_arfcn).
-    # Default behavior:
-    #   - allowed_n77_ssb: {new_arfcn, 653952}
-    #   - allowed_n77_arfcn: {654652, 655324, 655984, 656656}
     default_n77_ssb_list = [new_arfcn, 653952]
     default_n77_list = [654652, 655324, 655984, 656656]
 
@@ -606,10 +595,9 @@ def run_configuration_audit(
             new_arfcn=new_arfcn,
             allowed_n77_ssb=allowed_n77_ssb,
             allowed_n77_arfcn=allowed_n77_arfcn,
-            n77b_ssb_arfcn=n77b_ssb_arfcn,  # NEW parameter
+            n77b_ssb_arfcn=n77b_ssb_arfcn,
         )
     except TypeError:
-        # Backwards compatibility if ConfigurationAudit does not yet support n77b_ssb_arfcn
         print(f"{module_name} [WARN] Installed ConfigurationAudit does not support 'n77b_ssb_arfcn'. Running without it.")
         app = ConfigurationAudit(
             old_arfcn=old_arfcn,
@@ -618,17 +606,13 @@ def run_configuration_audit(
             allowed_n77_arfcn=allowed_n77_arfcn,
         )
 
-    # We pass the filters to ConfigurationAudit if its run() accepts it. If not, we call old signature.
     kwargs = dict(module_name=module_name, versioned_suffix=versioned_suffix, tables_order=TABLES_ORDER)
     if freq_filters_csv:
-        # New optional argument expected by updated ConfigurationAudit
         kwargs["filter_frequencies"] = [x.strip() for x in freq_filters_csv.split(",") if x.strip()]
 
     try:
-        # Try new signature first
         out = app.run(input_dir, **kwargs)
     except TypeError:
-        # Fallback to legacy signature (no filtering supported by class yet)
         print(f"{module_name} [WARN] Installed ConfigurationAudit does not support 'filter_frequencies'. Running without filters.")
         out = app.run(input_dir, module_name=module_name, versioned_suffix=versioned_suffix, tables_order=TABLES_ORDER)
 
@@ -641,9 +625,7 @@ def run_configuration_audit(
 def run_consistency_checks(input_pre_dir: Optional[str], input_post_dir: Optional[str],
                            freq_pre: Optional[str], freq_post: Optional[str]) -> None:
     """
-    Updated runner to support DUAL INPUT mode.
-    - If both input_pre_dir and input_post_dir are provided, attempt to load Pre/Post from separate folders.
-    - If not, preserve legacy behavior (single parent folder expected with 'Pre' and 'Post' children).
+    Runner for ConsistencyChecks supporting dual-input mode.
     """
     module_name = "[Consistency Checks (Pre/Post Comparison)]"
     print(f"{module_name} Running…")
@@ -653,40 +635,31 @@ def run_consistency_checks(input_pre_dir: Optional[str], input_post_dir: Optiona
 
     app = ConsistencyChecks()
 
-    # Dual-input new path
     if input_pre_dir and input_post_dir:
         print(f"{module_name} PRE folder:  '{input_pre_dir}'")
         print(f"{module_name} POST folder: '{input_post_dir}'")
 
-        # Try a modern signature first: loadPrePost(pre_dir, post_dir)
         loaded = False
         try:
-            # If the class supports two-args loader, this will work
-            app.loadPrePost(input_pre_dir, input_post_dir)  # NEW signature support
+            app.loadPrePost(input_pre_dir, input_post_dir)
             loaded = True
         except TypeError:
-            # Fall back to custom method name if available
             try:
-                app.loadPrePostFromFolders(input_pre_dir, input_post_dir)  # Alternate name
+                app.loadPrePostFromFolders(input_pre_dir, input_post_dir)
                 loaded = True
             except Exception:
                 loaded = False
 
         if not loaded:
-            # Do not try legacy common-parent fallback anymore; we explicitly require dual-input support
             print(f"{module_name} [ERROR] ConsistencyChecks class does not support dual folders (Pre/Post).")
             print(f"{module_name}         Please update ConsistencyChecks.loadPrePost(pre_dir, post_dir) to enable dual-input mode.")
             return
 
-        # Output base is ALWAYS the POST folder in dual-input mode
         output_dir = os.path.join(input_post_dir, f"CellRelationConsistencyChecks_{versioned_suffix}")
-
     else:
-        # Legacy single-input behavior preserved: expect a parent with Pre/Post inside
-        input_dir = input_pre_dir or ""  # using first param slot as "single"
+        input_dir = input_pre_dir or ""
         print(f"{module_name} Input folder: '{input_dir}'")
 
-        # Early presence check (legacy)
         pre_found, post_found = False, False
         try:
             for entry in os.scandir(input_dir):
@@ -711,7 +684,8 @@ def run_consistency_checks(input_pre_dir: Optional[str], input_post_dir: Optiona
                 "No processing will be performed. Please select a folder that contains both Pre and Post folders."
             )
             try:
-                messagebox.showwarning("Missing Pre/Post folders", msg)
+                if messagebox is not None:
+                    messagebox.showwarning("Missing Pre/Post folders", msg)
             except Exception:
                 print(f"{module_name} [WARNING] {msg}")
             return
@@ -723,10 +697,8 @@ def run_consistency_checks(input_pre_dir: Optional[str], input_post_dir: Optiona
 
     if freq_pre and freq_post:
         try:
-            # Modern comparison that may accept dual context transparently
             results = app.comparePrePost(freq_pre, freq_post, module_name)
         except TypeError:
-            # If the signature differs in your class, adapt here as needed
             results = app.comparePrePost(freq_pre, freq_post)
     else:
         print(f"{module_name} [INFO] Frequencies not provided. Comparison will be skipped; only tables will be saved.")
@@ -795,6 +767,7 @@ def _read_cfg() -> configparser.ConfigParser:
         parser.read(CONFIG_PATH, encoding="utf-8")
     return parser
 
+
 def load_last_input_dir_from_config() -> str:
     """Load last used input directory for single-input modules."""
     try:
@@ -817,6 +790,7 @@ def save_last_input_dir_to_config(input_dir: str) -> None:
             parser.write(f)
     except Exception:
         pass
+
 
 def load_last_dual_from_config() -> tuple[str, str]:
     """Load last used PRE/POST input directories for dual-input module."""
@@ -844,8 +818,36 @@ def save_last_dual_to_config(pre_dir: str, post_dir: str) -> None:
     except Exception:
         pass
 
+
+def load_last_freqs_from_config() -> tuple[str, str]:
+    """Load last used Pre/Post main frequencies from config file."""
+    try:
+        if not CONFIG_PATH.exists():
+            return ("", "")
+        parser = _read_cfg()
+        freq_pre = parser.get(CONFIG_SECTION, CONFIG_KEY_FREQ_PRE, fallback="").strip()
+        freq_post = parser.get(CONFIG_SECTION, CONFIG_KEY_FREQ_POST, fallback="").strip()
+        return (freq_pre, freq_post)
+    except Exception:
+        return ("", "")
+
+
+def save_last_freqs_to_config(freq_pre: str, freq_post: str) -> None:
+    """Persist last used Pre/Post main frequencies to config file."""
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        parser = _read_cfg()
+        _ensure_cfg_section(parser)
+        parser[CONFIG_SECTION][CONFIG_KEY_FREQ_PRE] = (freq_pre or "").strip()
+        parser[CONFIG_SECTION][CONFIG_KEY_FREQ_POST] = (freq_post or "").strip()
+        with CONFIG_PATH.open("w", encoding="utf-8") as f:
+            parser.write(f)
+    except Exception:
+        pass
+
+
 def load_last_n77b_ssb_from_config() -> str:
-    """Load last used N77B SSB frequency from config file. Returns empty string if missing."""
+    """Load last used N77B SSB frequency from config file."""
     try:
         if not CONFIG_PATH.exists():
             return ""
@@ -865,11 +867,11 @@ def save_last_n77b_ssb_to_config(n77b_ssb_freq: str) -> None:
         with CONFIG_PATH.open("w", encoding="utf-8") as f:
             parser.write(f)
     except Exception:
-        # Never break the tool just because config persistence fails
         pass
 
+
 def load_last_filters_from_config() -> str:
-    """Load last used frequency filters (CSV) from config file. Returns empty string if missing."""
+    """Load last used frequency filters (CSV) from config file."""
     try:
         if not CONFIG_PATH.exists():
             return ""
@@ -894,9 +896,7 @@ def save_last_filters_to_config(filters_csv: str) -> None:
 
 def load_last_allowed_lists_from_config() -> tuple[str, str]:
     """
-    Load last used Allowed N77 SSB and Allowed N77 ARFCN CSV lists
-    from config file. Returns a tuple (allowed_n77_ssb_n77, allowed_n77_arfcn_csv).
-    If missing, returns empty strings.
+    Load last used Allowed N77 SSB and Allowed N77 ARFCN CSV lists from config file.
     """
     try:
         if not CONFIG_PATH.exists():
@@ -911,8 +911,7 @@ def load_last_allowed_lists_from_config() -> tuple[str, str]:
 
 def save_last_allowed_lists_to_config(allowed_n77_ssb_csv: str, allowed_n77_arfcn_csv: str) -> None:
     """
-    Persist last used Allowed N77 SSB and Allowed N77 ARFCN CSV lists
-    to config file.
+    Persist last used Allowed N77 SSB and Allowed N77 ARFCN CSV lists to config file.
     """
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -923,12 +922,13 @@ def save_last_allowed_lists_to_config(allowed_n77_ssb_csv: str, allowed_n77_arfc
         with CONFIG_PATH.open("w", encoding="utf-8") as f:
             parser.write(f)
     except Exception:
-        # Never break the tool just because config persistence fails
         pass
+
 
 def _ensure_cfg_section(parser: configparser.ConfigParser) -> None:
     if CONFIG_SECTION not in parser:
         parser[CONFIG_SECTION] = {}
+
 
 # =============================== EXECUTION CORE ============================= #
 
@@ -951,7 +951,6 @@ def execute_module(module_fn,
                    allowed_n77_ssb_csv: str = "",
                    allowed_n77_arfcn_csv: str = "",
                    n77b_ssb_freq: str = "") -> None:
-
     """
     Execute the selected module with the proper signature (timed).
     - For run_consistency_checks: prefer dual-input if both input_pre_dir/post_dir are provided.
@@ -963,14 +962,11 @@ def execute_module(module_fn,
 
     try:
         if module_fn is run_consistency_checks:
-            # Dual-input preferred if provided
             if input_pre_dir and input_post_dir:
                 module_fn(input_pre_dir, input_post_dir, freq_pre, freq_post)
             else:
-                # Backwards compatibility: use single input_dir (legacy layout)
                 module_fn(input_dir, None, freq_pre, freq_post)
         elif module_fn is run_configuration_audit:
-            # Pass GUI/CLI frequencies and ARFCN lists down so ConfigurationAudit can use them
             module_fn(
                 input_dir,
                 freq_filters_csv=freq_filters_csv,
@@ -978,18 +974,16 @@ def execute_module(module_fn,
                 freq_post=freq_post,
                 allowed_n77_ssb_csv=allowed_n77_ssb_csv,
                 allowed_n77_arfcn_csv=allowed_n77_arfcn_csv,
-                n77b_ssb_freq=n77b_ssb_freq,  # NEW
+                n77b_ssb_freq=n77b_ssb_freq,
             )
         elif module_fn is run_initial_cleanup:
             module_fn(input_dir, freq_pre, freq_post)
         elif module_fn is run_final_cleanup:
             module_fn(input_dir, freq_pre, freq_post)
         else:
-            # Generic fallback for custom callables
             sig = inspect.signature(module_fn)
             params = sig.parameters
             if "input_pre_dir" in params and "input_post_dir" in params:
-                # Modules that support dual-input signature can optionally accept extra config
                 kwargs = {}
                 if "freq_pre" in params:
                     kwargs["freq_pre"] = freq_pre
@@ -1003,16 +997,15 @@ def execute_module(module_fn,
                     kwargs["allowed_n77_arfcn_csv"] = allowed_n77_arfcn_csv
                 module_fn(input_pre_dir=input_pre_dir, input_post_dir=input_post_dir, **kwargs)
             elif "freq_filters_csv" in params or "allowed_n77_ssb_csv" in params or "allowed_n77_arfcn_csv" in params:
-                # Single-input modules with optional extra configuration
                 kwargs = {}
                 if "freq_filters_csv" in params:
                     kwargs["freq_filters_csv"] = freq_filters_csv
                 if "allowed_n77_ssb_csv" in params:
-                    kwargs["allowed_ssb_n77_csv"] = allowed_n77_ssb_csv
+                    kwargs["allowed_n77_ssb_csv"] = allowed_n77_ssb_csv
                 if "allowed_n77_arfcn_csv" in params:
                     kwargs["allowed_n77_arfcn_csv"] = allowed_n77_arfcn_csv
                 if "n77b_ssb_freq" in params:
-                    kwargs["n77b_ssb_freq"] = n77b_ssb_freq  # NEW
+                    kwargs["n77b_ssb_freq"] = n77b_ssb_freq
                 module_fn(input_dir, freq_pre, freq_post, **kwargs)
             else:
                 module_fn(input_dir, freq_pre, freq_post)
@@ -1022,9 +1015,7 @@ def execute_module(module_fn,
 
 
 def ask_reopen_launcher() -> bool:
-    """Ask the user if the launcher should reopen after a module finishes.
-    Returns True to reopen, False to exit.
-    """
+    """Ask the user if the launcher should reopen after a module finishes."""
     if messagebox is None:
         return False
     try:
@@ -1065,7 +1056,7 @@ def main():
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     log_filename = f"RetuningAutomation_{timestamp}_v{TOOL_VERSION}.log"
 
-    # Detect the base directory of the running script or compiled binary
+    # Detect base directory
     try:
         base_dir = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else __file__))
     except Exception:
@@ -1080,7 +1071,6 @@ def main():
     sys.stderr = sys.stdout
     print(f"[Logger] Output will also be written to: {log_path}\n")
 
-    # Load Tool while splash image is shown (only for Windows)
     print("\nLoading Tool...")
     # Remove Splash image from Pyinstaller
     if '_PYI_SPLASH_IPC' in os.environ and importlib.util.find_spec("pyi_splash"):
@@ -1099,32 +1089,36 @@ def main():
             f.write(b"READY")
         if os.path.exists(splash_filename):
             os.unlink(splash_filename)
+
     print("Tool loaded!")
     print(TOOL_DESCRIPTION)
     print(f"\n[Config] Using config file: {CONFIG_PATH}\n")
 
+    # Parse CLI
     args = parse_args()
+    parser = getattr(args, "_parser")
 
-    # Determine default input(s) and filters (persist across runs)
+    no_args = (len(sys.argv) == 1)
+
+    # Load persisted config
     persisted_last_single = load_last_input_dir_from_config()
-    persisted_pre, persisted_post = load_last_dual_from_config()
-
+    persisted_pre_dir, persisted_post_dir = load_last_dual_from_config()
+    persisted_freq_pre, persisted_freq_post = load_last_freqs_from_config()
     persisted_n77b_ssb = load_last_n77b_ssb_from_config()
     persisted_allowed_n77_ssb, persisted_allowed_n77_arfcn = load_last_allowed_lists_from_config()
 
-
+    # Defaults (CLI overrides persisted, which override hardcoded defaults)
     default_input = args.input or persisted_last_single or INPUT_FOLDER or ""
-    default_input_pre = args.input_pre or persisted_pre or INPUT_FOLDER_PRE or ""
-    default_input_post = args.input_post or persisted_post or INPUT_FOLDER_POST or ""
+    default_input_pre = args.input_pre or persisted_pre_dir or INPUT_FOLDER_PRE or ""
+    default_input_post = args.input_post or persisted_post_dir or INPUT_FOLDER_POST or ""
 
     persisted_filters = load_last_filters_from_config()
     default_filters_csv = _normalize_csv_list(args.freq_filters or persisted_filters)
 
-    default_pre = args.freq_pre or DEFAULT_FREQ_PRE
-    default_post = args.freq_post or DEFAULT_FREQ_POST
+    default_pre = args.freq_pre or persisted_freq_pre or DEFAULT_FREQ_PRE
+    default_post = args.freq_post or persisted_freq_post or DEFAULT_FREQ_POST
     default_n77b_ssb = args.freq_n77b_ssb or persisted_n77b_ssb or DEFAULT_N77B_SSB
 
-    # Defaults for ARFCN lists (CLI overrides persisted values, which override global defaults)
     default_allowed_n77_ssb_csv = _normalize_csv_list(
         args.allowed_n77_ssb or persisted_allowed_n77_ssb or DEFAULT_ALLOWED_N77_SSB_CSV
     )
@@ -1132,188 +1126,21 @@ def main():
         args.allowed_n77_arfcn or persisted_allowed_n77_arfcn or DEFAULT_ALLOWED_N77_ARFCN_CSV
     )
 
-    # CASE A: CLI module specified
-    if args.module:
-        module_fn = resolve_module_callable(args.module)
-        if module_fn is None:
-            raise SystemExit(f"Unknown module: {args.module}")
-
-        # Consistency-check can use dual-input from CLI
-        if module_fn is run_consistency_checks:
-            input_pre_dir = args.input_pre or default_input_pre
-            input_post_dir = args.input_post or default_input_post
-
-            # If missing and GUI allowed, show GUI with dual layout
-            if (not input_pre_dir or not input_post_dir) and not args.no_gui and tk is not None:
-                while True:
-                    sel = gui_config_dialog(
-                        default_input="",  # single not used here
-                        default_pre=default_pre,
-                        default_post=default_post,
-                        default_filters_csv=default_filters_csv,
-                        default_input_pre=input_pre_dir,
-                        default_input_post=input_post_dir,
-                        default_allowed_n77_ssb_csv=default_allowed_n77_ssb_csv,
-                        default_allowed_n77_arfcn_csv=default_allowed_n77_arfcn_csv,
-                    )
-                    if sel is None:
-                        raise SystemExit("Cancelled.")
-                    input_pre_dir = sel.input_pre_dir
-                    input_post_dir = sel.input_post_dir
-                    freq_pre = sel.freq_pre
-                    freq_post = sel.freq_post
-                    n77b_ssb_freq = sel.n77b_ssb_freq
-                    freq_filters_csv = sel.freq_filters_csv
-                    default_allowed_n77_ssb_csv = sel.allowed_n77_ssb_csv
-                    default_allowed_n77_arfcn_csv = sel.allowed_n77_arfcn_csv
-
-                    # Persist last used inputs/filters
-                    # Persist last used inputs/filters/allowed lists
-                    save_last_dual_to_config(input_pre_dir, input_post_dir)
-                    save_last_n77b_ssb_to_config(n77b_ssb_freq)
-                    save_last_filters_to_config(freq_filters_csv)
-                    save_last_allowed_lists_to_config(
-                        default_allowed_n77_ssb_csv,
-                        default_allowed_n77_arfcn_csv,
-                    )
-
-                    try:
-                        execute_module(
-                            module_fn,
-                            input_dir="",  # unused in dual mode
-                            freq_pre=freq_pre,
-                            freq_post=freq_post,
-                            freq_filters_csv=freq_filters_csv,
-                            input_pre_dir=input_pre_dir,
-                            input_post_dir=input_post_dir,
-                            allowed_n77_ssb_csv=default_allowed_n77_ssb_csv,
-                            allowed_n77_arfcn_csv=default_allowed_n77_arfcn_csv,
-                            n77b_ssb_freq=n77b_ssb_freq,  # NEW
-                        )
-
-                    except Exception as e:
-                        log_module_exception(sel.module, e)
-
-                    if not ask_reopen_launcher():
-                        break
-                return
-
-            # Pure headless CLI (dual-input required)
-            if not (input_pre_dir and input_post_dir):
-                raise SystemExit("Both --input-pre and --input-post must be provided for consistency-check in headless mode.")
-            save_last_dual_to_config(input_pre_dir, input_post_dir)
-            save_last_n77b_ssb_to_config(default_n77b_ssb)
-            save_last_filters_to_config(default_filters_csv)
-            save_last_allowed_lists_to_config(
-                default_allowed_n77_ssb_csv,
-                default_allowed_n77_arfcn_csv,
-            )
-            execute_module(
-                module_fn,
-                input_dir="",  # unused in dual mode
-                freq_pre=default_pre,
-                freq_post=default_post,
-                freq_filters_csv=default_filters_csv,
-                input_pre_dir=input_pre_dir,
-                input_post_dir=input_post_dir,
-                allowed_n77_ssb_csv=default_allowed_n77_ssb_csv,
-                allowed_n77_arfcn_csv=default_allowed_n77_arfcn_csv,
-                n77b_ssb_freq=default_n77b_ssb,  # NEW
-            )
-
+    # ====================== MODE 1: GUI (NO ARGS) ===========================
+    if no_args:
+        if tk is None or args.no_gui:
+            print("[INFO] GUI is not available on this system or has been disabled.")
+            print("[INFO] Please use the CLI arguments as shown below:\n")
+            parser.print_help()
             return
 
-        # Other modules (single-input)
-        input_dir = args.input or default_input
-        freq_pre = default_pre
-        freq_post = default_post
-        n77b_ssb_freq = default_n77b_ssb
-        freq_filters_csv = default_filters_csv
-        allowed_n77_ssb_csv = default_allowed_n77_ssb_csv
-        allowed_n77_arfcn_csv = default_allowed_n77_arfcn_csv
-
-        if not input_dir and not args.no_gui and tk is not None:
-            while True:
-                sel = gui_config_dialog(
-                    default_input=default_input,
-                    default_pre=freq_pre,
-                    default_post=freq_post,
-                    default_filters_csv=freq_filters_csv,
-                    default_input_pre=default_input_pre,
-                    default_input_post=default_input_post,
-                    default_n77b_ssb=default_n77b_ssb,
-                    default_allowed_n77_ssb_csv=default_allowed_n77_ssb_csv,
-                    default_allowed_n77_arfcn_csv=default_allowed_n77_arfcn_csv,
-                )
-                if sel is None:
-                    raise SystemExit("Cancelled.")
-                # Persist last used inputs/filters
-                save_last_input_dir_to_config(sel.input_dir)
-                save_last_n77b_ssb_to_config(sel.n77b_ssb_freq)
-                save_last_filters_to_config(sel.freq_filters_csv)
-                save_last_allowed_lists_to_config(
-                    sel.allowed_n77_ssb_csv,
-                    sel.allowed_n77_arfcn_csv,
-                )
-                default_input = sel.input_dir
-                freq_pre = sel.freq_pre
-                freq_post = sel.freq_post
-                default_n77b_ssb = sel.n77b_ssb_freq  # NEW
-                freq_filters_csv = sel.freq_filters_csv
-                default_allowed_n77_ssb_csv = sel.allowed_n77_ssb_csv
-                default_allowed_n77_arfcn_csv = sel.allowed_n77_arfcn_csv
-
-                try:
-                    execute_module(
-                        module_fn,
-                        input_dir=sel.input_dir,
-                        freq_pre=sel.freq_pre,
-                        freq_post=sel.freq_post,
-                        n77b_ssb_freq=sel.n77b_ssb_freq,  # NEW
-                        freq_filters_csv=sel.freq_filters_csv,
-                        input_pre_dir=sel.input_pre_dir,
-                        input_post_dir=sel.input_post_dir,
-                        allowed_n77_ssb_csv=sel.allowed_n77_ssb_csv,
-                        allowed_n77_arfcn_csv=sel.allowed_n77_arfcn_csv,
-                    )
-                except Exception as e:
-                    log_module_exception(sel.module, e)
-
-                if not ask_reopen_launcher():
-                    break
-            return
-
-        # Headless single-input path
-        if not input_dir:
-            raise SystemExit("Input folder not provided.")
-        save_last_input_dir_to_config(input_dir)
-        save_last_n77b_ssb_to_config(n77b_ssb_freq)
-        save_last_filters_to_config(freq_filters_csv)
-        save_last_allowed_lists_to_config(
-            default_allowed_n77_ssb_csv,
-            default_allowed_n77_arfcn_csv,
-        )
-        execute_module(
-            module_fn,
-            input_dir=input_dir,
-            freq_pre=freq_pre,
-            freq_post=freq_post,
-            n77b_ssb_freq=n77b_ssb_freq,  # NEW
-            freq_filters_csv=freq_filters_csv,
-            allowed_n77_ssb_csv=allowed_n77_ssb_csv,
-            allowed_n77_arfcn_csv=allowed_n77_arfcn_csv,
-        )
-        return
-
-    # CASE B: No module specified -> GUI (if available)
-    if not args.no_gui and tk is not None:
+        # GUI loop
         while True:
-            # Use last in-memory defaults so they persist across module runs
             sel = gui_config_dialog(
                 default_input=default_input,
                 default_pre=default_pre,
                 default_post=default_post,
-                default_n77b_ssb=default_n77b_ssb,  # NEW
+                default_n77b_ssb=default_n77b_ssb,
                 default_filters_csv=default_filters_csv,
                 default_input_pre=default_input_pre,
                 default_input_post=default_input_post,
@@ -1327,36 +1154,30 @@ def main():
             if module_fn is None:
                 raise SystemExit(f"Unknown module selected: {sel.module}")
 
-            # Persist inputs appropriately (config file + in-memory defaults)
+            # Persist inputs appropriately
             if _is_consistency_module(sel.module):
                 save_last_dual_to_config(sel.input_pre_dir, sel.input_post_dir)
-                input_dir = ""  # unused in dual mode
-
-                # Update in-memory defaults for next iterations
+                input_dir = ""
                 default_input_pre = sel.input_pre_dir
                 default_input_post = sel.input_post_dir
             else:
                 save_last_input_dir_to_config(sel.input_dir)
                 input_dir = sel.input_dir
-
-                # Update in-memory default for single-input modules
                 default_input = sel.input_dir
 
-                # Persist filters, frequencies and allowed lists (config file + in-memory defaults)
-                save_last_filters_to_config(sel.freq_filters_csv)
-                save_last_allowed_lists_to_config(
-                    sel.allowed_n77_ssb_csv,
-                    sel.allowed_n77_arfcn_csv,
-                )
-                default_filters_csv = sel.freq_filters_csv
-                default_pre = sel.freq_pre
-                default_post = sel.freq_post
-                default_allowed_n77_ssb_csv = sel.allowed_n77_ssb_csv
-                default_allowed_n77_arfcn_csv = sel.allowed_n77_arfcn_csv
-
-            # Persist N77B SSB frequency for all modules
+            # Persist all numeric / list config
+            save_last_freqs_to_config(sel.freq_pre, sel.freq_post)
             save_last_n77b_ssb_to_config(sel.n77b_ssb_freq)
+            save_last_filters_to_config(sel.freq_filters_csv)
+            save_last_allowed_lists_to_config(sel.allowed_n77_ssb_csv, sel.allowed_n77_arfcn_csv)
+
+            # Update in-memory defaults
+            default_pre = sel.freq_pre
+            default_post = sel.freq_post
             default_n77b_ssb = sel.n77b_ssb_freq
+            default_filters_csv = sel.freq_filters_csv
+            default_allowed_n77_ssb_csv = sel.allowed_n77_ssb_csv
+            default_allowed_n77_arfcn_csv = sel.allowed_n77_arfcn_csv
 
             try:
                 execute_module(
@@ -1364,7 +1185,7 @@ def main():
                     input_dir=input_dir,
                     freq_pre=sel.freq_pre,
                     freq_post=sel.freq_post,
-                    n77b_ssb_freq=sel.n77b_ssb_freq,  # NEW
+                    n77b_ssb_freq=sel.n77b_ssb_freq,
                     freq_filters_csv=sel.freq_filters_csv,
                     input_pre_dir=sel.input_pre_dir,
                     input_post_dir=sel.input_post_dir,
@@ -1378,12 +1199,81 @@ def main():
                 break
         return
 
-    # CASE C: Headless (no GUI)
-    # Default to Consistency Checks or require single-input depending on args
-    raise SystemExit("Headless start without --module is not supported. Please provide --module and input(s).")
+    # ====================== MODE 2: PURE CLI (WITH ARGS) ====================
 
-    # (No code beyond this point)
-    # Log closing and restoration would happen at the natural process exit.
+    if not args.module:
+        print("Error: --module is required when running in CLI mode.\n")
+        parser.print_help()
+        return
+
+    module_fn = resolve_module_callable(args.module)
+    if module_fn is None:
+        print(f"Error: Unknown module '{args.module}'.\n")
+        parser.print_help()
+        return
+
+    # Use resolved defaults
+    freq_pre = default_pre
+    freq_post = default_post
+    n77b_ssb_freq = default_n77b_ssb
+    freq_filters_csv = default_filters_csv
+    allowed_n77_ssb_csv = default_allowed_n77_ssb_csv
+    allowed_n77_arfcn_csv = default_allowed_n77_arfcn_csv
+
+    if module_fn is run_consistency_checks:
+        input_pre_dir = args.input_pre or default_input_pre
+        input_post_dir = args.input_post or default_input_post
+
+        if not input_pre_dir or not input_post_dir:
+            print("Error: --input-pre and --input-post are required for consistency-check in CLI mode.\n")
+            parser.print_help()
+            return
+
+        # Persist config
+        save_last_dual_to_config(input_pre_dir, input_post_dir)
+        save_last_freqs_to_config(freq_pre, freq_post)
+        save_last_n77b_ssb_to_config(n77b_ssb_freq)
+        save_last_filters_to_config(freq_filters_csv)
+        save_last_allowed_lists_to_config(allowed_n77_ssb_csv, allowed_n77_arfcn_csv)
+
+        execute_module(
+            module_fn,
+            input_dir="",
+            freq_pre=freq_pre,
+            freq_post=freq_post,
+            n77b_ssb_freq=n77b_ssb_freq,
+            freq_filters_csv=freq_filters_csv,
+            input_pre_dir=input_pre_dir,
+            input_post_dir=input_post_dir,
+            allowed_n77_ssb_csv=allowed_n77_ssb_csv,
+            allowed_n77_arfcn_csv=allowed_n77_arfcn_csv,
+        )
+        return
+
+    # Other modules: single-input required
+    input_dir = args.input or default_input
+    if not input_dir:
+        print("Error: --input is required for this module in CLI mode.\n")
+        parser.print_help()
+        return
+
+    # Persist config
+    save_last_input_dir_to_config(input_dir)
+    save_last_freqs_to_config(freq_pre, freq_post)
+    save_last_n77b_ssb_to_config(n77b_ssb_freq)
+    save_last_filters_to_config(freq_filters_csv)
+    save_last_allowed_lists_to_config(allowed_n77_ssb_csv, allowed_n77_arfcn_csv)
+
+    execute_module(
+        module_fn,
+        input_dir=input_dir,
+        freq_pre=freq_pre,
+        freq_post=freq_post,
+        n77b_ssb_freq=n77b_ssb_freq,
+        freq_filters_csv=freq_filters_csv,
+        allowed_n77_ssb_csv=allowed_n77_ssb_csv,
+        allowed_n77_arfcn_csv=allowed_n77_arfcn_csv,
+    )
 
 
 if __name__ == "__main__":

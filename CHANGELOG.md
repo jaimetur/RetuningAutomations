@@ -4,6 +4,26 @@
 
 ---
 
+## Release: v0.3.0
+- ### Release Date: 2025-11-19
+
+- ### Main Changes:
+  
+  - #### 🚨 Breaking Changes:
+  
+  - #### 🌟 New Features:
+
+  - #### 🚀 Enhancements:
+    - Refactor main module `RetuningAutomations` to simplify the logic.
+  
+  - #### 🐛 Bug fixes:
+    - Minor bug fixing.
+    
+  - #### 📚 Documentation: 
+    - Updated documentation with latest changes
+
+---
+
 ## Release: v0.2.9
 - ### Release Date: 2025-11-18
 
