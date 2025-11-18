@@ -27,14 +27,14 @@ import importlib
 from pathlib import Path
 
 # Import our different Classes
-from src.modules.ConsistencyChecks.ConsistencyChecks import ConsistencyChecks
-from src.modules.ConfigurationAudit import ConfigurationAudit
-from src.modules.CleanUp.InitialCleanUp import InitialCleanUp
-from src.modules.CleanUp.FinalCleanUp import FinalCleanUp
 from src.utils.utils_datetime import format_duration_hms
 from src.utils.utils_infrastructure import LoggerDual
 from src.utils.utils_io import normalize_csv_list, parse_arfcn_csv_to_set, load_cfg_values, save_cfg_values, log_module_exception
 
+from src.modules.ConsistencyChecks.ConsistencyChecks import ConsistencyChecks
+from src.modules.ConfigurationAudit import ConfigurationAudit
+from src.modules.CleanUp.InitialCleanUp import InitialCleanUp
+from src.modules.CleanUp.FinalCleanUp import FinalCleanUp
 # ================================ VERSIONING ================================ #
 
 TOOL_NAME           = "RetuningAutomations"
@@ -733,7 +733,6 @@ def ask_reopen_launcher() -> bool:
     except Exception:
         return False
 
-
 # ================================== MAIN =================================== #
 def main():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -787,6 +786,9 @@ def main():
 
     # Load persisted config (all de golpe)
     cfg = load_cfg_values(
+        CONFIG_PATH,
+        CONFIG_SECTION,
+        CFG_FIELD_MAP,
         "last_input",
         "last_input_pre",
         "last_input_post",
@@ -862,6 +864,10 @@ def main():
 
             # Persist all with a single call
             save_cfg_values(
+                config_dir=CONFIG_DIR,
+                config_path=CONFIG_PATH,
+                config_section=CONFIG_SECTION,
+                cfg_field_map=CFG_FIELD_MAP,
                 last_input=input_dir,
                 last_input_pre=sel.input_pre_dir,
                 last_input_post=sel.input_post_dir,
@@ -930,6 +936,10 @@ def main():
             return
 
         save_cfg_values(
+            config_dir=CONFIG_DIR,
+            config_path=CONFIG_PATH,
+            config_section=CONFIG_SECTION,
+            cfg_field_map=CFG_FIELD_MAP,
             last_input_pre=input_pre_dir,
             last_input_post=input_post_dir,
             freq_pre=freq_pre,
@@ -962,6 +972,10 @@ def main():
         return
 
     save_cfg_values(
+        config_dir=CONFIG_DIR,
+        config_path=CONFIG_PATH,
+        config_section=CONFIG_SECTION,
+        cfg_field_map=CFG_FIELD_MAP,
         last_input=input_dir,
         freq_pre=freq_pre,
         freq_post=freq_post,
@@ -985,3 +999,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

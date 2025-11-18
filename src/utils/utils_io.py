@@ -4,8 +4,15 @@ import os
 import traceback
 from typing import List, Optional, Tuple
 
-from src.RetuningAutomations import CONFIG_PATH, CONFIG_SECTION, CFG_FIELD_MAP, CONFIG_DIR, messagebox
-
+# ============================ OPTIONAL TKINTER UI =========================== #
+try:
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox
+except Exception:
+    tk = None
+    ttk = None
+    filedialog = None
+    messagebox = None
 # ============================ IO / TEXT ============================
 
 ENCODINGS_TRY = ["utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "cp1252", "utf-8"]
@@ -118,39 +125,40 @@ def parse_arfcn_csv_to_set(
     return set(values)
 
 
-def read_cfg() -> configparser.ConfigParser:
+def ensure_cfg_section(config_section, parser: configparser.ConfigParser) -> None:
+    if config_section not in parser:
+        parser[config_section] = {}
+
+def read_cfg(config_path) -> configparser.ConfigParser:
     parser = configparser.ConfigParser()
-    if CONFIG_PATH.exists():
-        parser.read(CONFIG_PATH, encoding="utf-8")
+    if config_path.exists():
+        parser.read(config_path, encoding="utf-8")
     return parser
 
-def ensure_cfg_section(parser: configparser.ConfigParser) -> None:
-    if CONFIG_SECTION not in parser:
-        parser[CONFIG_SECTION] = {}
 
-def load_cfg_values(*fields: str) -> dict:
+def load_cfg_values(config_path, config_section, cfg_field_map, *fields: str) -> dict:
     """
-    Load multiple logical fields defined in CFG_FIELD_MAP.
+    Load multiple logical fields defined in cfg_field_map.
     Returns a dict {logical_name: value_str} with "" as fallback.
     """
     values = {f: "" for f in fields}
-    if not CONFIG_PATH.exists():
+    if not config_path.exists():
         return values
 
-    parser = read_cfg()
-    if CONFIG_SECTION not in parser:
+    parser = read_cfg(config_path)
+    if config_section not in parser:
         return values
 
-    section = parser[CONFIG_SECTION]
+    section = parser[config_section]
     for logical in fields:
-        cfg_key = CFG_FIELD_MAP.get(logical)
+        cfg_key = cfg_field_map.get(logical)
         if not cfg_key:
             continue
         values[logical] = section.get(cfg_key, "").strip()
     return values
 
 
-def save_cfg_values(**kwargs: str) -> None:
+def save_cfg_values(config_dir, config_path, config_section, cfg_field_map, **kwargs: str) -> None:
     """
     Generates multiple logical fields at once.
     - Applies normalize_csv_list to CSV fields.
@@ -160,15 +168,15 @@ def save_cfg_values(**kwargs: str) -> None:
         return
 
     try:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        parser = read_cfg()
-        ensure_cfg_section(parser)
-        section = parser[CONFIG_SECTION]
+        config_dir.mkdir(parents=True, exist_ok=True)
+        parser = read_cfg(config_path)
+        ensure_cfg_section(config_section, parser)
+        section = parser[config_section]
 
         csv_fields = {"freq_filters", "allowed_n77_ssb", "allowed_n77_arfcn"}
 
         for logical, value in kwargs.items():
-            cfg_key = CFG_FIELD_MAP.get(logical)
+            cfg_key = cfg_field_map.get(logical)
             if not cfg_key:
                 continue
             val = value or ""
@@ -176,7 +184,7 @@ def save_cfg_values(**kwargs: str) -> None:
                 val = normalize_csv_list(val)
             section[cfg_key] = val
 
-        with CONFIG_PATH.open("w", encoding="utf-8") as f:
+        with config_path.open("w", encoding="utf-8") as f:
             parser.write(f)
     except Exception:
         # Nunca romper solo por fallo de persistencia
@@ -201,4 +209,5 @@ def log_module_exception(module_label: str, exc: BaseException) -> None:
             )
         except Exception:
             pass
+
 
