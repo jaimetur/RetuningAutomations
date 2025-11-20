@@ -16,9 +16,10 @@
   - #### 🚀 Enhancements:
     - From table FreqPrioNR, detect how many N77 nodes has RATFreqPrioId equal to 'fwa' and 'publicsafety' and add them to Frequency Audit.
     - From table FreqPrioNR, detect how many N77 nodes has any RATFreqPrioId different from 'fwa' or 'publicsafety' and add them to Frequency Inconsistencies.
-    - Included Pivot `GUtranFreqRelation` in `ConfigurationAudit` module
-    - Included LogPath in Summary tab of `ConfigurationAudit`
-    - Other minor changes to `ConfigurationAudit`
+    - Included Pivot `GUtranFreqRelation` in `ConfigurationAudit` module.
+    - Included LogPath in Summary tab of `ConfigurationAudit`.
+    - Increased up to 100 nodes/slide (max 4 columns) for the Inconsistencies slides in `ConfigurationAudit` module.
+    - Other minor changes to `ConfigurationAudit`.
   
   - #### 🐛 Bug fixes:
     - Minor bug fixing.
@@ -40,7 +41,7 @@
   - #### 🚀 Enhancements:
     - Refactor main module `RetuningAutomations` to simplify the logic.
     - Added ARFCN 650006 to default Allowed ARFCN list.
-    - Added 'LTE nodes with GUtranSyncSignalFrequency defined' to GUtran Frequency Audit.
+    - Added 'LTE nodes with GUtranSyncSignalFrequency defined' to LTE Frequency Audit.
     - Changed N77 band detection to filter freqs within range 646600-660000.
     - Avoid adding Inconsistencies slides if there is no any inconsistency found for each metric.
   
