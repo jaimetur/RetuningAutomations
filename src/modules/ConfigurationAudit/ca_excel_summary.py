@@ -348,8 +348,8 @@ def build_summary_audit(
                                 ", ".join(cells_old_without_new),
                             )
 
-                            # Parameter equality check (ignoring ID/reference columns)
-                            cols_to_ignore = {arfcn_col}
+                            # Parameter equality check (ignoring ID/reference columns and helper columns)
+                            cols_to_ignore = {arfcn_col, "_arfcn_int_"}
                             for name in full_n77.columns:
                                 lname = str(name).lower()
                                 if lname in {"nrfreqrelationid", "nrfrequencyref", "reservedby"}:
