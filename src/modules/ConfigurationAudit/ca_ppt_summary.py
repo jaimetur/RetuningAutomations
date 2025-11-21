@@ -73,12 +73,12 @@ def generate_ppt_summary(
             - For each row with Value > 0 and a non-empty node list:
                 · Main bullet "Metric: Value".
                 · Level-1 bullets with the node list parsed from ExtraInfo
-                  (comma/semicolon separated), split into blocks of 50 items
-                  per slide (no truncation).
+                  (comma/semicolon separated), split into blocks of up to
+                  100 items per slide (no truncation).
     """
     try:
         from pptx import Presentation
-        from pptx.util import Pt
+        from pptx.util import Pt, Inches
     except ImportError:
         print(f"{module_name} [INFO] python-pptx is not installed. Skipping PPT summary.")
         return None
@@ -115,12 +115,8 @@ def generate_ppt_summary(
         print(f"{module_name} [WARN] Could not load PPT template, using default. ({e})")
         prs = Presentation()
 
-    try:
-        title_slide_layout = prs.slide_layouts[0]
-        content_layout = prs.slide_layouts[2]
-    except Exception:
-        title_slide_layout = prs.slide_layouts[0]
-        content_layout = prs.slide_layouts[1]
+    title_slide_layout = prs.slide_layouts[0]
+    content_layout = prs.slide_layouts[1]
 
     # --- Title slide ---
     slide = prs.slides.add_slide(title_slide_layout)
@@ -162,9 +158,9 @@ def generate_ppt_summary(
 
                 main_text = f"{metric}: {value}"
 
-                # Split the node list into chunks of 50 per slide (no truncation)
-                for chunk_start in range(0, len(nodes), 50):
-                    chunk_nodes = nodes[chunk_start:chunk_start + 50]
+                # Split the node list into chunks of 100 per slide (no truncation)
+                for chunk_start in range(0, len(nodes), 100):
+                    chunk_nodes = nodes[chunk_start:chunk_start + 100]
 
                     slide = prs.slides.add_slide(content_layout)
                     title_shape = slide.shapes.title
@@ -183,12 +179,52 @@ def generate_ppt_summary(
                     p_main.level = 0
                     _set_paragraph_font_size(p_main, MAIN_BULLET_SIZE)
 
-                    # One level-1 bullet per node/cell in this chunk
-                    for node in chunk_nodes:
-                        p_node = tf.add_paragraph()
-                        p_node.text = node
-                        p_node.level = 1
-                        _set_paragraph_font_size(p_node, SUB_BULLET_SIZE)
+                    # Decide how many nodes go in each column (max 4 columns × 25 nodes = 100)
+                    max_per_column = 25
+                    space_from_top = 0.5
+
+                    # If there are 25 or fewer nodes, keep old single-column behavior
+                    if len(chunk_nodes) <= max_per_column:
+                        for node in chunk_nodes:
+                            p_node = tf.add_paragraph()
+                            p_node.text = node
+                            p_node.level = 1
+                            _set_paragraph_font_size(p_node, SUB_BULLET_SIZE)
+                    else:
+                        # Create chunks of up to 25 nodes per column
+                        columns = [
+                            chunk_nodes[i:i + max_per_column]
+                            for i in range(0, len(chunk_nodes), max_per_column)
+                        ]
+
+                        # Limit to 4 columns max (100 nodes per slide)
+                        columns = columns[:4]
+                        num_columns = len(columns)
+
+                        # Dynamic column width so space is equally divided
+                        column_width = body.width / num_columns
+
+                        # Create each column dynamically
+                        for idx_col, col_nodes in enumerate(columns):
+                            col_left = body.left + column_width * idx_col
+                            col_top = body.top + Inches(space_from_top)
+                            col_height = body.height
+
+                            col_box = slide.shapes.add_textbox(col_left, col_top, column_width, col_height)
+                            tf_col = col_box.text_frame
+                            tf_col.clear()
+
+                            # First node in the column
+                            p_col = tf_col.paragraphs[0]
+                            p_col.text = col_nodes[0]
+                            p_col.level = 1
+                            _set_paragraph_font_size(p_col, SUB_BULLET_SIZE)
+
+                            for node in col_nodes[1:]:
+                                p_node = tf_col.add_paragraph()
+                                p_node.text = node
+                                p_node.level = 1
+                                _set_paragraph_font_size(p_node, SUB_BULLET_SIZE)
 
         # ---------------------- AUDIT CATEGORIES: single slide per category ----------------------
         else:
@@ -244,3 +280,4 @@ def generate_ppt_summary(
 
     prs.save(ppt_path)
     return ppt_path
+
