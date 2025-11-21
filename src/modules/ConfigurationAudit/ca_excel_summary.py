@@ -670,7 +670,7 @@ def build_summary_audit(
                     add_row(
                         "LTE Frequency Audit",
                         "GUtranSyncSignalFrequency",
-                        "LTE nodes with GUtranSyncSignalFrequency defined:",
+                        "LTE nodes with GUtranSyncSignalFrequency defined (from GUtranSyncSignalFrequency table)",
                         len(all_nodes_with_freq),
                         ", ".join(all_nodes_with_freq),
                     )
