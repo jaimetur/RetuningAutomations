@@ -955,7 +955,7 @@ def build_summary_audit(
 
                         add_row(
                             "GUtranFreqRelation",
-                            "LTE Frequency Inconsistencies",
+                            "LTE Frequency Audit",
                             f"LTE cells with GUtranFreqRelationId {expected_old_rel_id} but without {expected_new_rel_id} (from GUtranFreqRelation table)",
                             len(cells_old_without_new),
                             ", ".join(cells_old_without_new),
