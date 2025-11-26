@@ -31,7 +31,6 @@
   - #### 📚 Documentation: 
     - Updated documentation with latest changes.
 
-
 ---
 
 ## Release: v0.3.4
