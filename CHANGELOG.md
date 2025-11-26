@@ -13,6 +13,10 @@
   
   - #### 🌟 New Features:
     - Added commands to `Consistency Checks` module.
+      - Correction_Command to 'GU_new' table.
+      - Correction_Command to 'NR_new' table.
+      - Correction_Command to 'GU_missing' table.
+      - Correction_Command to 'NR_missing' table.
 
   - #### 🚀 Enhancements:
   
