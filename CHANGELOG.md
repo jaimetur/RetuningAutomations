@@ -19,6 +19,7 @@
       - Correction_Commands to 'NR_missing' table.
 
   - #### 🚀 Enhancements:
+    - Created a scheduled workflow for binary genaration.
   
   - #### 🐛 Bug fixes:
     - Minor bug fixing.
