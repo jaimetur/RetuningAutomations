@@ -596,7 +596,6 @@ class ConsistencyChecks:
         return df
 
     @staticmethod
-    @staticmethod
     def _add_correction_command_nr_missing(df: pd.DataFrame) -> pd.DataFrame:
         """
         Add 'Correction_Cmd' column for NR_missing sheet, building a multiline correction script.
