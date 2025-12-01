@@ -20,6 +20,8 @@
   
   - #### 🐛 Bug fixes:
     - Fixed abnormal prefix for long paths in Windows.
+    - Fixed invalid Inconsistency in mixed nodes (MidLowBand & mmWave).
+    - Aligned all Audit messages.
     - Minor bug fixing.
     
   - #### 📚 Documentation: 
