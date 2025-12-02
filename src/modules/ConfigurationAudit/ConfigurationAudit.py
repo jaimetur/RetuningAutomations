@@ -114,7 +114,7 @@ class ConfigurationAudit:
         # --- Detect log/txt files ---
         log_files = find_log_files(input_dir)
         if not log_files:
-            raise FileNotFoundError(f"No .log/.logs/.txt files found in: {input_dir}")
+            return ""
 
         # --- Natural sorting of files (handles '(1)', '(2)', '(10)', etc.) ---
         sorted_files = sorted(log_files, key=natural_logfile_key)

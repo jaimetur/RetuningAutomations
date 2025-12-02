@@ -18,6 +18,7 @@
   - #### 🚀 Enhancements:
     - Fixed `Freq_Pre/Freq_Post` values in `NR_Disc` table on `ConsistencyCheck` module.
     - Renamed sheet `Summary_Detailed` to `Summary_CellRelation`.
+    - Removed Exception when input folder does not contain logs files. Now a message is displayed instead of throw an exception.
   
   - #### 🐛 Bug fixes:
     - Removed Duplicated check in `GUtranSyncSignalFrequency` Table.
