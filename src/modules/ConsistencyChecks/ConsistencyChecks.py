@@ -263,7 +263,7 @@ class ConsistencyChecks:
                     full_node_names.add(token.strip())
 
         if full_node_names:
-            print(f"{module_name} [INFO] Nodes without retuning and belonging to buffer) (destination of relations to be skipped from Discrepancies): {sorted(full_node_names)}")
+            print(f"{module_name} [INFO] Nodes without retuning and belonging to buffer (destination of relations to be skipped from Discrepancies): {sorted(full_node_names)}")
         if nodes:
             print(f"{module_name} [INFO] Nodes without retuning (numeric identifiers): {sorted(nodes)}")
 
@@ -381,7 +381,8 @@ class ConsistencyChecks:
                     rel_series = src_rel_df[relation_col].reindex(pre_common.index)
                     rel_series = rel_series.astype(str).fillna("")
                     try:
-                        pattern_nodes = "(" + "|".join(re.escape(x) for x in sorted(nodes_without_retune_ids)) + ")"
+                        # Usar grupo NO capturante para evitar el warning
+                        pattern_nodes = r"\b(?:" + "|".join(re.escape(x) for x in sorted(nodes_without_retune_ids)) + r")\b"
                         skip_mask = rel_series.str.contains(pattern_nodes, regex=True, na=False)
                         # Set masks to False for rows belonging to nodes without retuning
                         any_diff_mask = any_diff_mask & ~skip_mask
