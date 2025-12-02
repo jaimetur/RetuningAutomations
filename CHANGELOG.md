@@ -13,6 +13,7 @@
   
   - #### 🌟 New Features:
     - Excluded Relations Discrepancies on those relations towards nodes that have not been retuned (buffer) on `ConsistencyCheck` module.
+    - Added a new sheet called `SummaryAuditComparison` to `ConsistencyCheck` output Excel file to compare the values of both Audits run (for Pre-folder and Post-folder).
 
   - #### 🚀 Enhancements:
     - Fixed `Freq_Pre/Freq_Post` values in `NR_Disc` table on `ConsistencyCheck` module.

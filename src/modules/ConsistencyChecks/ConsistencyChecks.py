@@ -38,6 +38,9 @@ class ConsistencyChecks:
             "GUtranCellRelation": {"Pre": [], "Post": []},
             "NRCellRelation": {"Pre": [], "Post": []},
         }
+        # NEW: keep paths to PRE/POST ConfigurationAudit Excel files
+        self.audit_pre_excel: Optional[str] = None
+        self.audit_post_excel: Optional[str] = None
 
     # --------- folder helpers ---------
     @staticmethod
@@ -270,7 +273,33 @@ class ConsistencyChecks:
         return nodes
 
     # ----------------------------- COMPARISON ----------------------------- #
-    def comparePrePost(self, freq_before: str, freq_after: str, module_name: Optional[str] = "", audit_post_excel: Optional[str] = None) -> Dict[str, Dict[str, pd.DataFrame]]:
+    def comparePrePost(
+            self,
+            freq_before: str,
+            freq_after: str,
+            module_name: Optional[str] = "",
+            audit_post_excel: Optional[str] = None,
+            audit_pre_excel: Optional[str] = None,
+    ) -> Dict[str, Dict[str, pd.DataFrame]]:
+        """
+        Compare Pre/Post relations for GUtranCellRelation and NRCellRelation.
+
+        Parameters:
+          freq_before: old SSB frequency (Pre)
+          freq_after: new SSB frequency (Post)
+          module_name: optional label for logging
+          audit_post_excel: path to POST ConfigurationAudit Excel (SummaryAudit sheet)
+          audit_pre_excel: path to PRE ConfigurationAudit Excel (SummaryAudit sheet)
+
+        Note:
+          audit_post_excel is used to exclude nodes that did not complete retuning.
+          Both audit_pre_excel and audit_post_excel are stored in the instance so that
+          save_outputs_excel can build the SummaryAuditComparisson sheet.
+        """
+        # NEW: store audit paths in the instance so they can be used later in save_outputs_excel
+        self.audit_pre_excel = audit_pre_excel
+        self.audit_post_excel = audit_post_excel
+
         if not self.tables:
             # Soft fail: do not raise, just inform and return empty results
             print(f"{module_name} [WARNING] No tables loaded. Skipping comparison (likely missing Pre/Post folders).")
@@ -552,7 +581,7 @@ class ConsistencyChecks:
                 post_col = f"{col}_PostSide"
                 if post_col in merged_all.columns:
                     all_relations[col] = merged_all[post_col].where(merged_all[post_col].astype(str) != "",
-                                                                   merged_all[pre_col] if pre_col in merged_all.columns else "")
+                                                                    merged_all[pre_col] if pre_col in merged_all.columns else "")
                 elif pre_col in merged_all.columns:
                     all_relations[col] = merged_all[pre_col]
                 elif col in merged_all.columns:
@@ -1094,6 +1123,82 @@ class ConsistencyChecks:
                 total_files += 1
 
         return total_files
+
+    # ----------------------------- SUMMARY AUDIT COMPARISSON ----------------------------- #
+    def build_summaryaudit_comparison(self) -> Optional[pd.DataFrame]:
+        """
+        Build a comparison DataFrame from PRE and POST ConfigurationAudit SummaryAudit sheets.
+
+        - Loads 'SummaryAudit' from both PRE and POST audit Excels.
+        - Drops the 'ExtraInfo' column if present.
+        - Renames 'Value' to 'Value_Pre' in PRE and to 'Value_Post' in POST.
+        - Merges both on all common columns except the value columns.
+        """
+        pre_path = self.audit_pre_excel
+        post_path = self.audit_post_excel
+
+        if not pre_path or not post_path:
+            return None
+
+        def _load_summary(path: str, label: str) -> Optional[pd.DataFrame]:
+            try:
+                x_path = to_long_path(path)
+            except Exception:
+                x_path = path
+
+            if not os.path.isfile(x_path):
+                print(f"[Consistency Checks] [WARNING] {label} SummaryAudit Excel not found: '{path}'. Skipping SummaryAuditComparisson for this side.")
+                return None
+
+            try:
+                df = pd.read_excel(x_path, sheet_name="SummaryAudit")
+            except Exception as e:
+                print(f"[Consistency Checks] [WARNING] Could not read 'SummaryAudit' sheet from {label} audit Excel '{path}': {e}.")
+                return None
+
+            # Drop ExtraInfo if present
+            if "ExtraInfo" in df.columns:
+                df = df.drop(columns=["ExtraInfo"])
+
+            # Ensure Value exists (some very old versions might differ)
+            if "Value" not in df.columns:
+                df["Value"] = pd.NA
+
+            return df
+
+        pre_df = _load_summary(pre_path, "PRE")
+        post_df = _load_summary(post_path, "POST")
+
+        if pre_df is None and post_df is None:
+            return None
+        if pre_df is None:
+            # Only POST available: just rename its Value as Value_Post
+            post_df = post_df.copy()
+            post_df = post_df.rename(columns={"Value": "Value_Post"})
+            return post_df
+        if post_df is None:
+            # Only PRE available: just rename its Value as Value_Pre
+            pre_df = pre_df.copy()
+            pre_df = pre_df.rename(columns={"Value": "Value_Pre"})
+            return pre_df
+
+        pre_df = pre_df.copy()
+        post_df = post_df.copy()
+
+        pre_df = pre_df.rename(columns={"Value": "Value_Pre"})
+        post_df = post_df.rename(columns={"Value": "Value_Post"})
+
+        # Common columns to merge on (all shared columns except the value columns)
+        common_cols = [c for c in pre_df.columns if c in post_df.columns and c not in ("Value_Pre", "Value_Post")]
+
+        if not common_cols:
+            # If there are no common columns, just concatenate with an extra column indicating source
+            pre_df["Source"] = "PRE"
+            post_df["Source"] = "POST"
+            return pd.concat([pre_df, post_df], ignore_index=True)
+
+        merged = pd.merge(pre_df, post_df, on=common_cols, how="outer")
+        return merged
 
     # ----------------------------- OUTPUT TO EXCEL ----------------------------- #
     def save_outputs_excel(self, output_dir: str, results: Optional[Dict[str, Dict[str, pd.DataFrame]]] = None, versioned_suffix: Optional[str] = None) -> None:
