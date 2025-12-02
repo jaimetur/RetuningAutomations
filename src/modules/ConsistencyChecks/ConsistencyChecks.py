@@ -584,7 +584,8 @@ class ConsistencyChecks:
             if rel_series is not None and not rel_series.empty and pattern_nodes:
                 to_skip_relations = rel_series[rel_series.str.contains(pattern_nodes, regex=True, na=False)]
                 if not to_skip_relations.empty:
-                    print(f"{module_name} - Relations skipped due to destination node being in the no-retuning buffer ({table_name}): {sorted(to_skip_relations.unique())}")
+                    skipped_count = len(to_skip_relations)
+                    print(f"{module_name} - Relations skipped due to destination node being in the no-retuning buffer ({table_name}): {skipped_count} -> {sorted(to_skip_relations.unique())}")
 
         return results
 
