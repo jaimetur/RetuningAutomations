@@ -1133,7 +1133,8 @@ class ConsistencyChecks:
         - Drops the 'ExtraInfo' column if present.
         - Renames 'Value' to 'Value_Pre' in PRE and to 'Value_Post' in POST.
         - Merges both on all common columns except the value columns.
-        - Row order is driven by the PRE sheet; POST-only rows are appended after PRE rows.
+        - Row order is driven by the PRE sheet (left-merge), so the new sheet
+          keeps exactly the same row ordering as the PRE SummaryAudit.
         """
         pre_path = self.audit_pre_excel
         post_path = self.audit_post_excel
@@ -1185,19 +1186,17 @@ class ConsistencyChecks:
             print("[Consistency Checks] Using only PRE ConfigurationAudit SummaryAudit for SummaryAuditComparisson.")
             return pre_df
 
-        # NEW: keep original row order for PRE and POST
+        # NEW: copy before renaming to avoid side effects
         pre_df = pre_df.copy()
         post_df = post_df.copy()
-        pre_df["_Order_Pre"] = range(len(pre_df))  # preserve PRE row order
-        post_df["_Order_Post"] = range(len(post_df))  # preserve POST row order
 
         pre_df = pre_df.rename(columns={"Value": "Value_Pre"})
         post_df = post_df.rename(columns={"Value": "Value_Post"})
 
-        # Common columns to merge on (all shared columns except the value/order columns)
+        # Common columns to merge on (all shared columns except the value columns)
         common_cols = [
             c for c in pre_df.columns
-            if c in post_df.columns and c not in ("Value_Pre", "Value_Post", "_Order_Pre", "_Order_Post")
+            if c in post_df.columns and c not in ("Value_Pre", "Value_Post")
         ]
 
         if not common_cols:
@@ -1206,18 +1205,15 @@ class ConsistencyChecks:
             post_df["Source"] = "POST"
             merged = pd.concat([pre_df, post_df], ignore_index=True)
         else:
-            merged = pd.merge(pre_df, post_df, on=common_cols, how="outer")
-
-        # NEW: sort to mimic PRE row order (PRE as reference, POST-only rows after)
-        if "_Order_Pre" in merged.columns or "_Order_Post" in merged.columns:
-            # Use large number for missing order so that side-only rows go to the bottom
-            merged["_Order_Pre"] = merged.get("_Order_Pre", pd.Series(pd.NA, index=merged.index))
-            merged["_Order_Post"] = merged.get("_Order_Post", pd.Series(pd.NA, index=merged.index))
-            merged["_Order_Pre"] = merged["_Order_Pre"].fillna(10 ** 12)
-            merged["_Order_Post"] = merged["_Order_Post"].fillna(10 ** 12)
-
-            merged = merged.sort_values(by=["*_Order_Pre", "_Order_Post"], kind="stable")  # keep stable ordering within PRE
-            merged = merged.drop(columns=["_Order_Pre", "_Order_Post"], errors="ignore")
+            # NEW: perform a LEFT merge using PRE as reference to preserve row order
+            #      This guarantees that SummaryAuditComparisson keeps the exact PRE ordering.
+            merged = pd.merge(
+                pre_df,
+                post_df[common_cols + ["Value_Post"]],
+                on=common_cols,
+                how="left",
+                sort=False,
+            )
 
         print("[Consistency Checks] Using PRE and POST ConfigurationAudit SummaryAudit sheets for SummaryAuditComparisson.")
         return merged
@@ -1447,3 +1443,4 @@ class ConsistencyChecks:
             if ws_comp is not None:
                 # Use default parameters: Category header name and default colors
                 apply_alternating_category_row_fills(ws_comp)
+
