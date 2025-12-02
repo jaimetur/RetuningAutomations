@@ -1015,72 +1015,63 @@ def build_summary_audit(
                     if not valid_rows.empty:
                         valid_rows["_is_mmwave_"] = valid_rows["_arfcn_int_"].between(2_000_000, 2_100_000, inclusive="both")
 
-                        nodes_with_lte_sync = sorted(valid_rows[node_col].astype(str).unique())
-                        mmwave_nodes: list[str] = []
-                        lowmid_nodes: list[str] = []
-                        mixed_nodes: list[str] = []
-
-                        for node, series in valid_rows.groupby(node_col)["_is_mmwave_"]:
-                            has_mmwave = bool(series.any())
-                            has_lowmid = bool((~series).any())
-                            node_str = str(node)
-
-                            if has_mmwave and not has_lowmid:
-                                mmwave_nodes.append(node_str)
-                            elif has_lowmid and not has_mmwave:
-                                lowmid_nodes.append(node_str)
-                            elif has_mmwave and has_lowmid:
-                                mixed_nodes.append(node_str)
-
-                        # Summary rows for LTE LowMidBand / mmWave node types
+                        # LTE nodes with GUtranSyncSignalFrequency defined (from GUtranSyncSignalFrequency table)
+                        all_nodes_with_freq = sorted(work.loc[work[arfcn_col].map(has_value), node_col].astype(str).unique())
                         add_row(
                             "GUtranSyncSignalFrequency",
                             "LTE Frequency Audit",
-                            "LTE Nodes with GUtranSyncSignalFrequency (from GUtranSyncSignalFrequency table)",
-                            len(nodes_with_lte_sync),
-                            ", ".join(nodes_with_lte_sync),
-                        )
-                        add_row(
-                            "GUtranSyncSignalFrequency",
-                            "LTE Frequency Audit",
-                            "LTE LowMidBand Nodes (from GUtranSyncSignalFrequency table)",
-                            len(lowmid_nodes),
-                            ", ".join(sorted(lowmid_nodes)),
-                        )
-                        add_row(
-                            "GUtranSyncSignalFrequency",
-                            "LTE Frequency Audit",
-                            "LTE mmWave Nodes (from GUtranSyncSignalFrequency table)",
-                            len(mmwave_nodes),
-                            ", ".join(sorted(mmwave_nodes)),
+                            "LTE nodes with GUtranSyncSignalFrequency defined (from GUtranSyncSignalFrequency table)",
+                            len(all_nodes_with_freq),
+                            ", ".join(all_nodes_with_freq),
                         )
 
-                        # Optional: nodes having both LowMidBand and mmWave SSBs
-                        if mixed_nodes:
-                            add_row(
-                                "GUtranSyncSignalFrequency",
-                                "LTE Frequency Audit",
-                                "LTE Nodes with both LowMidBand and mmWave GUtranSyncSignalFrequency SSBs (from GUtranSyncSignalFrequency table)",
-                                len(mixed_nodes),
-                                ", ".join(sorted(mixed_nodes)),
-                            )
+                        # nodes_with_lte_sync = sorted(valid_rows[node_col].astype(str).unique())
+                        # mmwave_nodes: list[str] = []
+                        # lowmid_nodes: list[str] = []
+                        # mixed_nodes: list[str] = []
+                        #
+                        # for node, series in valid_rows.groupby(node_col)["_is_mmwave_"]:
+                        #     has_mmwave = bool(series.any())
+                        #     has_lowmid = bool((~series).any())
+                        #     node_str = str(node)
+                        #
+                        #     if has_mmwave and not has_lowmid:
+                        #         mmwave_nodes.append(node_str)
+                        #     elif has_lowmid and not has_mmwave:
+                        #         lowmid_nodes.append(node_str)
+                        #     elif has_mmwave and has_lowmid:
+                        #         mixed_nodes.append(node_str)
+                        #
+                        # # Summary rows for LTE LowMidBand / mmWave node types
+                        # add_row(
+                        #     "GUtranSyncSignalFrequency",
+                        #     "LTE Frequency Audit",
+                        #     "LTE LowMidBand Nodes (from GUtranSyncSignalFrequency table)",
+                        #     len(lowmid_nodes),
+                        #     ", ".join(sorted(lowmid_nodes)),
+                        # )
+                        # add_row(
+                        #     "GUtranSyncSignalFrequency",
+                        #     "LTE Frequency Audit",
+                        #     "LTE mmWave Nodes (from GUtranSyncSignalFrequency table)",
+                        #     len(mmwave_nodes),
+                        #     ", ".join(sorted(mmwave_nodes)),
+                        # )
+                        #
+                        # # Optional: nodes having both LowMidBand and mmWave SSBs
+                        # if mixed_nodes:
+                        #     add_row(
+                        #         "GUtranSyncSignalFrequency",
+                        #         "LTE Frequency Audit",
+                        #         "LTE Nodes with both LowMidBand and mmWave GUtranSyncSignalFrequency SSBs (from GUtranSyncSignalFrequency table)",
+                        #         len(mixed_nodes),
+                        #         ", ".join(sorted(mixed_nodes)),
+                        #     )
 
                     # ------------------------------------------------------------------
                     # Existing logic: old/new SSB checks on LTE side
                     # ------------------------------------------------------------------
                     grouped = work.groupby(node_col)[arfcn_col]
-
-                    # LTE nodes with GUtranSyncSignalFrequency defined (from GUtranSyncSignalFrequency table)
-                    all_nodes_with_freq = sorted(
-                        work.loc[work[arfcn_col].map(has_value), node_col].astype(str).unique()
-                    )
-                    add_row(
-                        "GUtranSyncSignalFrequency",
-                        "LTE Frequency Audit",
-                        "LTE nodes with GUtranSyncSignalFrequency defined (from GUtranSyncSignalFrequency table)",
-                        len(all_nodes_with_freq),
-                        ", ".join(all_nodes_with_freq),
-                    )
 
                     # LTE Frequency Audit: LTE nodes with the old N77 SSB (from GUtranSyncSignalFrequency table)
                     old_nodes = sorted(str(node) for node, series in grouped if any(is_old(v) for v in series))
