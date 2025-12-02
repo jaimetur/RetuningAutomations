@@ -621,7 +621,10 @@ def run_configuration_audit(
         if os.path.isdir(output_dir):
             print(f"{module_name} Outputs saved to: '{pretty_path(output_dir)}'")
     else:
-        print(f"{module_name}  No logs found or nothing written.")
+        msg = f"{module_name} No logs found or nothing written."
+        print(msg)
+        if messagebox is not None:
+            messagebox.showwarning("Missing Logs in input folder", msg)
 
     # <<< NEW: return main Excel path so it can be used by ConsistencyChecks >>>
     return out
