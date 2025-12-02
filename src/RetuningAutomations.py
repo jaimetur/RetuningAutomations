@@ -644,8 +644,8 @@ def run_consistency_checks(
     Before running the Consistency Checks, this function will:
       1) Run Configuration Audit on the PRE folder.
       2) Run Configuration Audit on the POST folder.
-    Then it runs the Pre/Post comparison, passing the POST audit Excel
-    as an extra argument (when supported by ConsistencyChecks.comparePrePost).
+    Then it runs the Pre/Post comparison, passing the PRE and POST audit Excel
+    as extra arguments (when supported by ConsistencyChecks.comparePrePost).
     """
     module_name = "[Consistency Checks (Pre/Post Comparison)]"
     print(f"{module_name} Running…")
@@ -653,6 +653,8 @@ def run_consistency_checks(
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     versioned_suffix = f"{timestamp}_v{TOOL_VERSION}"
 
+    # NEW: track both PRE and POST ConfigurationAudit outputs
+    pre_audit_excel: Optional[str] = None
     post_audit_excel: Optional[str] = None
 
     # Pass N77 frequencies to constructor
@@ -682,6 +684,7 @@ def run_consistency_checks(
         )
         if audit_pre_excel:
             print(f"{module_name} PRE Configuration Audit output: '{pretty_path(audit_pre_excel)}'")
+            pre_audit_excel = audit_pre_excel
         else:
             print(f"{module_name} PRE Configuration Audit did not generate an output Excel file.")
 
@@ -699,20 +702,15 @@ def run_consistency_checks(
         )
         if audit_post_excel:
             print(f"{module_name} POST Configuration Audit output: '{pretty_path(audit_post_excel)}'")
+            post_audit_excel = audit_post_excel
         else:
             print(f"{module_name} POST Configuration Audit did not generate an output Excel file.")
-
-        post_audit_excel = audit_post_excel
 
         loaded = False
         try:
             app.loadPrePost(input_pre_dir_fs, input_post_dir_fs)
             loaded = True
         except TypeError:
-            try:
-                app.loadPrePostFromFolders(input_pre_dir_fs, input_post_dir_fs)
-                loaded = True
-            except Exception:
                 loaded = False
 
         if not loaded:
@@ -733,7 +731,7 @@ def run_consistency_checks(
             for entry in os.scandir(input_dir_fs or input_dir):
                 if not entry.is_dir():
                     continue
-                tag = ConsistencyChecks._detect_prepost(entry.name)
+                tag = ConsistencyChecks.detect_prepost(entry.name)
                 if tag == "Pre":
                     pre_found = True
                     pre_dir_path = entry.path
@@ -776,6 +774,7 @@ def run_consistency_checks(
             )
             if audit_pre_excel:
                 print(f"{module_name} PRE Configuration Audit output: '{pretty_path(audit_pre_excel)}'")
+                pre_audit_excel = audit_pre_excel
             else:
                 print(f"{module_name} PRE Configuration Audit did not generate an output Excel file.")
 
@@ -794,9 +793,9 @@ def run_consistency_checks(
             )
             if audit_post_excel:
                 print(f"{module_name} POST Configuration Audit output: '{pretty_path(audit_post_excel)}'")
+                post_audit_excel = audit_post_excel
             else:
                 print(f"{module_name} POST Configuration Audit did not generate an output Excel file.")
-            post_audit_excel = audit_post_excel
 
         app.loadPrePost(input_dir_fs or input_dir)
         output_dir = os.path.join(input_dir_fs or input_dir, f"ConsistencyChecks_{versioned_suffix}")
@@ -804,14 +803,21 @@ def run_consistency_checks(
     results = None
 
     if n77_ssb_pre and n77_ssb_post:
-        # NEW: try with extra argument (post_audit_excel) first, then fall back for older versions
+        # NEW: try with both PRE and POST audit Excels first, then fall back for older versions
         try:
-            results = app.comparePrePost(n77_ssb_pre, n77_ssb_post, module_name, post_audit_excel)
+            # Preferred new signature: (old_ssb, new_ssb, module_name, pre_audit_excel, post_audit_excel)
+            results = app.comparePrePost(n77_ssb_pre, n77_ssb_post, module_name, pre_audit_excel, post_audit_excel)
         except TypeError:
+            # Fallback: older version that only knows post_audit_excel
             try:
-                results = app.comparePrePost(n77_ssb_pre, n77_ssb_post, module_name)
+                results = app.comparePrePost(n77_ssb_pre, n77_ssb_post, module_name, post_audit_excel)
             except TypeError:
-                results = app.comparePrePost(n77_ssb_pre, n77_ssb_post)
+                # Fallback: older version that only knows module_name
+                try:
+                    results = app.comparePrePost(n77_ssb_pre, n77_ssb_post, module_name)
+                except TypeError:
+                    # Legacy: only (old_ssb, new_ssb)
+                    results = app.comparePrePost(n77_ssb_pre, n77_ssb_post)
     else:
         print(f"{module_name} [INFO] Frequencies not provided. Comparison will be skipped; only tables will be saved.")
 
@@ -822,8 +828,6 @@ def run_consistency_checks(
         print(f"{module_name} Wrote CellRelation.xlsx and CellRelationDiscrepancies.xlsx (with Summary and details).")
     else:
         print(f"{module_name} Wrote CellRelation.xlsx (all tables). No comparison Excel because frequencies were not provided.")
-
-
 
 
 def run_initial_cleanup(input_dir: str, *_args) -> None:

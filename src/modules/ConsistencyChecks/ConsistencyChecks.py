@@ -8,7 +8,7 @@ import pandas as pd
 
 from src.utils.utils_dataframe import select_latest_by_date, normalize_df, make_index_by_keys
 from src.utils.utils_datetime import extract_date
-from src.utils.utils_excel import color_summary_tabs, style_headers_autofilter_and_autofit
+from src.utils.utils_excel import color_summary_tabs, style_headers_autofilter_and_autofit, apply_alternating_category_row_fills
 from src.utils.utils_frequency import detect_freq_column, detect_key_columns, extract_gu_freq_base, extract_nr_freq_base, enforce_gu_columns, enforce_nr_columns
 from src.utils.utils_io import read_text_lines, to_long_path, pretty_path
 from src.utils.utils_parsing import find_all_subnetwork_headers, extract_mo_from_subnetwork_line, parse_table_slice_from_subnetwork
@@ -38,10 +38,13 @@ class ConsistencyChecks:
             "GUtranCellRelation": {"Pre": [], "Post": []},
             "NRCellRelation": {"Pre": [], "Post": []},
         }
+        # NEW: keep paths to PRE/POST ConfigurationAudit Excel files
+        self.audit_pre_excel: Optional[str] = None
+        self.audit_post_excel: Optional[str] = None
 
     # --------- folder helpers ---------
     @staticmethod
-    def _detect_prepost(folder_name: str) -> Optional[str]:
+    def detect_prepost(folder_name: str) -> Optional[str]:
         name = folder_name.lower()
         if any(tok in name for tok in ConsistencyChecks.PRE_TOKENS):
             return "Pre"
@@ -50,14 +53,14 @@ class ConsistencyChecks:
         return None
 
     @staticmethod
-    def _insert_front_columns(df: pd.DataFrame, prepost: str, date_str: Optional[str]) -> pd.DataFrame:
+    def insert_front_columns(df: pd.DataFrame, prepost: str, date_str: Optional[str]) -> pd.DataFrame:
         df = df.copy()
         df.insert(0, "Pre/Post", prepost)
         df.insert(1, "Date", date_str if date_str else "")
         return df
 
     @staticmethod
-    def _table_key_name(table_base: str) -> str:
+    def table_key_name(table_base: str) -> str:
         return table_base.strip()
 
     # ----------------------------- LOADING ----------------------------- #
@@ -82,7 +85,7 @@ class ConsistencyChecks:
             for entry in os.scandir(input_dir):
                 if not entry.is_dir():
                     continue
-                prepost = self._detect_prepost(entry.name)
+                prepost = self.detect_prepost(entry.name)
                 if not prepost:
                     continue
                 if prepost == "Pre":
@@ -119,7 +122,7 @@ class ConsistencyChecks:
                         if df is None or df.empty:
                             continue
 
-                        df = self._insert_front_columns(df, prepost, date_str)
+                        df = self.insert_front_columns(df, prepost, date_str)
                         # NEW: store file path only for Summary; do not persist it inside DataFrames
                         self._source_paths.setdefault(mo, {}).setdefault(prepost, []).append((date_str or "", fpath))
                         collected[mo].append(df)
@@ -127,7 +130,7 @@ class ConsistencyChecks:
             self.tables = {}
             for base, chunks in collected.items():
                 if chunks:
-                    self.tables[self._table_key_name(base)] = pd.concat(chunks, ignore_index=True)
+                    self.tables[self.table_key_name(base)] = pd.concat(chunks, ignore_index=True)
 
             if not self.pre_folder_found:
                 print(f"[INFO] 'Pre' folder not found under: {input_dir}. Returning to GUI.")
@@ -179,7 +182,7 @@ class ConsistencyChecks:
                         if df is None or df.empty:
                             continue
 
-                        df = self._insert_front_columns(df, prepost, date_str)
+                        df = self.insert_front_columns(df, prepost, date_str)
                         # NEW: store file path only for Summary; do not persist it inside DataFrames
                         self._source_paths.setdefault(mo, {}).setdefault(prepost, []).append((date_str or "", fpath))
                         collected[mo].append(df)
@@ -190,14 +193,14 @@ class ConsistencyChecks:
             self.tables = {}
             for base, chunks in collected.items():
                 if chunks:
-                    self.tables[self._table_key_name(base)] = pd.concat(chunks, ignore_index=True)
+                    self.tables[self.table_key_name(base)] = pd.concat(chunks, ignore_index=True)
 
             if not self.tables:
                 print(f"[WARNING] No GU/NR tables were loaded from: {pre_dir} and {post_dir}.")
 
             return self.tables
 
-    # ----------------------------- LOAD NODES WITHOut RETUNNING ----------------------------- #
+    # ----------------------------- LOAD NODES WITHOUT RETUNNING ----------------------------- #
     def load_nodes_without_retune(self, audit_post_excel: Optional[str], module_name: Optional[str] = "") -> set[str]:
         """
         Read SummaryAudit sheet from POST Configuration Audit and extract node numeric identifiers
@@ -270,7 +273,33 @@ class ConsistencyChecks:
         return nodes
 
     # ----------------------------- COMPARISON ----------------------------- #
-    def comparePrePost(self, freq_before: str, freq_after: str, module_name: Optional[str] = "", audit_post_excel: Optional[str] = None) -> Dict[str, Dict[str, pd.DataFrame]]:
+    def comparePrePost(
+            self,
+            freq_before: str,
+            freq_after: str,
+            module_name: Optional[str] = "",
+            audit_pre_excel: Optional[str] = None,
+            audit_post_excel: Optional[str] = None,
+    ) -> Dict[str, Dict[str, pd.DataFrame]]:
+        """
+        Compare Pre/Post relations for GUtranCellRelation and NRCellRelation.
+
+        Parameters:
+          freq_before: old SSB frequency (Pre)
+          freq_after: new SSB frequency (Post)
+          module_name: optional label for logging
+          audit_pre_excel: path to PRE ConfigurationAudit Excel (SummaryAudit sheet)
+          audit_post_excel: path to POST ConfigurationAudit Excel (SummaryAudit sheet)
+
+        Note:
+          audit_post_excel is used to exclude nodes that did not complete retuning.
+          Both audit_pre_excel and audit_post_excel are stored in the instance so that
+          save_outputs_excel can build the SummaryAuditComparisson sheet.
+        """
+        # NEW: store audit paths in the instance so they can be used later in save_outputs_excel
+        self.audit_pre_excel = audit_pre_excel
+        self.audit_post_excel = audit_post_excel
+
         if not self.tables:
             # Soft fail: do not raise, just inform and return empty results
             print(f"{module_name} [WARNING] No tables loaded. Skipping comparison (likely missing Pre/Post folders).")
@@ -552,7 +581,7 @@ class ConsistencyChecks:
                 post_col = f"{col}_PostSide"
                 if post_col in merged_all.columns:
                     all_relations[col] = merged_all[post_col].where(merged_all[post_col].astype(str) != "",
-                                                                   merged_all[pre_col] if pre_col in merged_all.columns else "")
+                                                                    merged_all[pre_col] if pre_col in merged_all.columns else "")
                 elif pre_col in merged_all.columns:
                     all_relations[col] = merged_all[pre_col]
                 elif col in merged_all.columns:
@@ -580,7 +609,7 @@ class ConsistencyChecks:
             print(f"{module_name} - New Relations in Post: {len(new_in_post_clean)}")
             print(f"{module_name} - Missing Relations in Post: {len(missing_in_post_clean)}")
 
-            # DEBUG: print the relation names that match the pattern and will be excluded
+            # Print the relation names that match the pattern and will be excluded
             if rel_series is not None and not rel_series.empty and pattern_nodes:
                 to_skip_relations = rel_series[rel_series.str.contains(pattern_nodes, regex=True, na=False)]
                 if not to_skip_relations.empty:
@@ -1095,6 +1124,100 @@ class ConsistencyChecks:
 
         return total_files
 
+    # ----------------------------- SUMMARY AUDIT COMPARISSON ----------------------------- #
+    def build_summaryaudit_comparison(self) -> Optional[pd.DataFrame]:
+        """
+        Build a comparison DataFrame from PRE and POST ConfigurationAudit SummaryAudit sheets.
+
+        - Loads 'SummaryAudit' from both PRE and POST audit Excels.
+        - Drops the 'ExtraInfo' column if present.
+        - Renames 'Value' to 'Value_Pre' in PRE and to 'Value_Post' in POST.
+        - Merges both on all common columns except the value columns.
+        - Row order is driven by the PRE sheet (left-merge), so the new sheet
+          keeps exactly the same row ordering as the PRE SummaryAudit.
+        """
+        pre_path = self.audit_pre_excel
+        post_path = self.audit_post_excel
+
+        if not pre_path or not post_path:
+            return None
+
+        def _load_summary(path: str, label: str) -> Optional[pd.DataFrame]:
+            try:
+                x_path = to_long_path(path)
+            except Exception:
+                x_path = path
+
+            if not os.path.isfile(x_path):
+                print(f"[Consistency Checks] [WARNING] {label} SummaryAudit Excel not found: '{path}'. Skipping SummaryAuditComparisson for this side.")
+                return None
+
+            try:
+                df = pd.read_excel(x_path, sheet_name="SummaryAudit")
+            except Exception as e:
+                print(f"[Consistency Checks] [WARNING] Could not read 'SummaryAudit' sheet from {label} audit Excel '{path}': {e}.")
+                return None
+
+            # Drop ExtraInfo if present
+            if "ExtraInfo" in df.columns:
+                df = df.drop(columns=["ExtraInfo"])
+
+            # Ensure Value exists (some very old versions might differ)
+            if "Value" not in df.columns:
+                df["Value"] = pd.NA
+
+            return df
+
+        pre_df = _load_summary(pre_path, "PRE")
+        post_df = _load_summary(post_path, "POST")
+
+        if pre_df is None and post_df is None:
+            return None
+        if pre_df is None:
+            # Only POST available: just rename its Value as Value_Post
+            post_df = post_df.copy()
+            post_df = post_df.rename(columns={"Value": "Value_Post"})
+            print("[Consistency Checks] Using only POST ConfigurationAudit SummaryAudit for SummaryAuditComparisson.")
+            return post_df
+        if post_df is None:
+            # Only PRE available: just rename its Value as Value_Pre
+            pre_df = pre_df.copy()
+            pre_df = pre_df.rename(columns={"Value": "Value_Pre"})
+            print("[Consistency Checks] Using only PRE ConfigurationAudit SummaryAudit for SummaryAuditComparisson.")
+            return pre_df
+
+        # NEW: copy before renaming to avoid side effects
+        pre_df = pre_df.copy()
+        post_df = post_df.copy()
+
+        pre_df = pre_df.rename(columns={"Value": "Value_Pre"})
+        post_df = post_df.rename(columns={"Value": "Value_Post"})
+
+        # Common columns to merge on (all shared columns except the value columns)
+        common_cols = [
+            c for c in pre_df.columns
+            if c in post_df.columns and c not in ("Value_Pre", "Value_Post")
+        ]
+
+        if not common_cols:
+            # If there are no common columns, just concatenate with an extra column indicating source
+            pre_df["Source"] = "PRE"
+            post_df["Source"] = "POST"
+            merged = pd.concat([pre_df, post_df], ignore_index=True)
+        else:
+            # NEW: perform a LEFT merge using PRE as reference to preserve row order
+            #      This guarantees that SummaryAuditComparisson keeps the exact PRE ordering.
+            merged = pd.merge(
+                pre_df,
+                post_df[common_cols + ["Value_Post"]],
+                on=common_cols,
+                how="left",
+                sort=False,
+            )
+
+        print("[Consistency Checks] Using PRE and POST ConfigurationAudit SummaryAudit sheets for SummaryAuditComparisson.")
+        return merged
+
     # ----------------------------- OUTPUT TO EXCEL ----------------------------- #
     def save_outputs_excel(self, output_dir: str, results: Optional[Dict[str, Dict[str, pd.DataFrame]]] = None, versioned_suffix: Optional[str] = None) -> None:
         import os
@@ -1148,7 +1271,12 @@ class ConsistencyChecks:
 
             summary_df.to_excel(writer, sheet_name="Summary", index=False)
 
-            # Summary_Detailed
+            # NEW: add SummaryAuditComparisson sheet if PRE/POST ConfigurationAudit SummaryAudit are available
+            comparison_df = self.build_summaryaudit_comparison()
+            if comparison_df is not None and not comparison_df.empty:
+                comparison_df.to_excel(writer, sheet_name="SummaryAuditComparisson", index=False)
+
+            # Summary_CellRelation
             detailed_rows = []
             if results:
                 for name, bucket in results.items():
@@ -1215,15 +1343,19 @@ class ConsistencyChecks:
                             "Missing_Relations": int(miss_by_pair.get((fpre, fpost), 0)),
                         })
 
-            detailed_df = pd.DataFrame(detailed_rows) if detailed_rows else pd.DataFrame(
-                columns=[
-                    "Table", "KeyColumns", "FreqColumn", "Freq_Pre", "Freq_Post",
-                    "Relations_Pre", "Relations_Post", "Parameters_Discrepancies", "Freq_Discrepancies",
-                    "New_Relations", "Missing_Relations"
-                ]
-            )
+            # Classic construction of detailed_df (no walrus operator)
+            if detailed_rows:
+                detailed_df = pd.DataFrame(detailed_rows)
+            else:
+                detailed_df = pd.DataFrame(
+                    columns=[
+                        "Table", "KeyColumns", "FreqColumn", "Freq_Pre", "Freq_Post",
+                        "Relations_Pre", "Relations_Post", "Parameters_Discrepancies", "Freq_Discrepancies",
+                        "New_Relations", "Missing_Relations"
+                    ]
+                )
 
-            detailed_df.to_excel(writer, sheet_name="Summary_Detailed", index=False)
+            detailed_df.to_excel(writer, sheet_name="Summary_CellRelation", index=False)
 
             # Collect all dataframes that contain Correction_Cmd to export them later
             correction_cmd_sources: Dict[str, pd.DataFrame] = {}
@@ -1305,3 +1437,10 @@ class ConsistencyChecks:
 
             # New: apply header style + autofit columns (replaces the manual loop)
             style_headers_autofilter_and_autofit(writer, freeze_header=True, align="left")
+
+            # NEW: apply alternating Category fills (and inconsistency font colors) on SummaryAuditComparisson sheet
+            ws_comp = writer.sheets.get("SummaryAuditComparisson")
+            if ws_comp is not None:
+                # Use default parameters: Category header name and default colors
+                apply_alternating_category_row_fills(ws_comp)
+
