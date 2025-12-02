@@ -44,7 +44,7 @@ class ConsistencyChecks:
 
     # --------- folder helpers ---------
     @staticmethod
-    def _detect_prepost(folder_name: str) -> Optional[str]:
+    def detect_prepost(folder_name: str) -> Optional[str]:
         name = folder_name.lower()
         if any(tok in name for tok in ConsistencyChecks.PRE_TOKENS):
             return "Pre"
@@ -53,14 +53,14 @@ class ConsistencyChecks:
         return None
 
     @staticmethod
-    def _insert_front_columns(df: pd.DataFrame, prepost: str, date_str: Optional[str]) -> pd.DataFrame:
+    def insert_front_columns(df: pd.DataFrame, prepost: str, date_str: Optional[str]) -> pd.DataFrame:
         df = df.copy()
         df.insert(0, "Pre/Post", prepost)
         df.insert(1, "Date", date_str if date_str else "")
         return df
 
     @staticmethod
-    def _table_key_name(table_base: str) -> str:
+    def table_key_name(table_base: str) -> str:
         return table_base.strip()
 
     # ----------------------------- LOADING ----------------------------- #
@@ -85,7 +85,7 @@ class ConsistencyChecks:
             for entry in os.scandir(input_dir):
                 if not entry.is_dir():
                     continue
-                prepost = self._detect_prepost(entry.name)
+                prepost = self.detect_prepost(entry.name)
                 if not prepost:
                     continue
                 if prepost == "Pre":
@@ -122,7 +122,7 @@ class ConsistencyChecks:
                         if df is None or df.empty:
                             continue
 
-                        df = self._insert_front_columns(df, prepost, date_str)
+                        df = self.insert_front_columns(df, prepost, date_str)
                         # NEW: store file path only for Summary; do not persist it inside DataFrames
                         self._source_paths.setdefault(mo, {}).setdefault(prepost, []).append((date_str or "", fpath))
                         collected[mo].append(df)
@@ -130,7 +130,7 @@ class ConsistencyChecks:
             self.tables = {}
             for base, chunks in collected.items():
                 if chunks:
-                    self.tables[self._table_key_name(base)] = pd.concat(chunks, ignore_index=True)
+                    self.tables[self.table_key_name(base)] = pd.concat(chunks, ignore_index=True)
 
             if not self.pre_folder_found:
                 print(f"[INFO] 'Pre' folder not found under: {input_dir}. Returning to GUI.")
@@ -182,7 +182,7 @@ class ConsistencyChecks:
                         if df is None or df.empty:
                             continue
 
-                        df = self._insert_front_columns(df, prepost, date_str)
+                        df = self.insert_front_columns(df, prepost, date_str)
                         # NEW: store file path only for Summary; do not persist it inside DataFrames
                         self._source_paths.setdefault(mo, {}).setdefault(prepost, []).append((date_str or "", fpath))
                         collected[mo].append(df)
@@ -193,14 +193,14 @@ class ConsistencyChecks:
             self.tables = {}
             for base, chunks in collected.items():
                 if chunks:
-                    self.tables[self._table_key_name(base)] = pd.concat(chunks, ignore_index=True)
+                    self.tables[self.table_key_name(base)] = pd.concat(chunks, ignore_index=True)
 
             if not self.tables:
                 print(f"[WARNING] No GU/NR tables were loaded from: {pre_dir} and {post_dir}.")
 
             return self.tables
 
-    # ----------------------------- LOAD NODES WITHOut RETUNNING ----------------------------- #
+    # ----------------------------- LOAD NODES WITHOUT RETUNNING ----------------------------- #
     def load_nodes_without_retune(self, audit_post_excel: Optional[str], module_name: Optional[str] = "") -> set[str]:
         """
         Read SummaryAudit sheet from POST Configuration Audit and extract node numeric identifiers
@@ -278,8 +278,8 @@ class ConsistencyChecks:
             freq_before: str,
             freq_after: str,
             module_name: Optional[str] = "",
-            audit_post_excel: Optional[str] = None,
             audit_pre_excel: Optional[str] = None,
+            audit_post_excel: Optional[str] = None,
     ) -> Dict[str, Dict[str, pd.DataFrame]]:
         """
         Compare Pre/Post relations for GUtranCellRelation and NRCellRelation.
@@ -288,8 +288,8 @@ class ConsistencyChecks:
           freq_before: old SSB frequency (Pre)
           freq_after: new SSB frequency (Post)
           module_name: optional label for logging
-          audit_post_excel: path to POST ConfigurationAudit Excel (SummaryAudit sheet)
           audit_pre_excel: path to PRE ConfigurationAudit Excel (SummaryAudit sheet)
+          audit_post_excel: path to POST ConfigurationAudit Excel (SummaryAudit sheet)
 
         Note:
           audit_post_excel is used to exclude nodes that did not complete retuning.
@@ -1276,7 +1276,7 @@ class ConsistencyChecks:
             if comparison_df is not None and not comparison_df.empty:
                 comparison_df.to_excel(writer, sheet_name="SummaryAuditComparisson", index=False)
 
-            # Summary_Detailed
+            # Summary_CellRelation
             detailed_rows = []
             if results:
                 for name, bucket in results.items():
@@ -1355,7 +1355,7 @@ class ConsistencyChecks:
                     ]
                 )
 
-            detailed_df.to_excel(writer, sheet_name="Summary_Detailed", index=False)
+            detailed_df.to_excel(writer, sheet_name="Summary_CellRelation", index=False)
 
             # Collect all dataframes that contain Correction_Cmd to export them later
             correction_cmd_sources: Dict[str, pd.DataFrame] = {}

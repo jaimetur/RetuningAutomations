@@ -711,10 +711,6 @@ def run_consistency_checks(
             app.loadPrePost(input_pre_dir_fs, input_post_dir_fs)
             loaded = True
         except TypeError:
-            try:
-                app.loadPrePostFromFolders(input_pre_dir_fs, input_post_dir_fs)
-                loaded = True
-            except Exception:
                 loaded = False
 
         if not loaded:
@@ -735,7 +731,7 @@ def run_consistency_checks(
             for entry in os.scandir(input_dir_fs or input_dir):
                 if not entry.is_dir():
                     continue
-                tag = ConsistencyChecks._detect_prepost(entry.name)
+                tag = ConsistencyChecks.detect_prepost(entry.name)
                 if tag == "Pre":
                     pre_found = True
                     pre_dir_path = entry.path

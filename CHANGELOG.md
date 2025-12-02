@@ -17,6 +17,7 @@
 
   - #### 🚀 Enhancements:
     - Fixed `Freq_Pre/Freq_Post` values in `NR_Disc` table on `ConsistencyCheck` module.
+    - Renamed sheet `Summary_Detailed` to `Summary_CellRelation`.
   
   - #### 🐛 Bug fixes:
     - Removed Duplicated check in `GUtranSyncSignalFrequency` Table.
@@ -479,7 +480,7 @@
     - Created GitHub workflow to automatically generate binaries for the different OS and architecture.
     
   - #### 🐛 Bug fixes:
-    - Fixed bug on Summary_Detailed that was creating pairs of frequencies where Freq_Pre or Freq_Post was empty.
+    - Fixed bug on Summary_CellRelation that was creating pairs of frequencies where Freq_Pre or Freq_Post was empty.
 
   - #### 📚 Documentation: 
     - Created README.md
@@ -500,7 +501,7 @@
     - Improvements on Module '1. Pre/Post Relations Consistency Check' to satisfy the requirements.
     
   - #### 🐛 Bug fixes:
-    - Fixed bug on Summary_Detailed that was creating pairs of frequencies where Freq_Pre or Freq_Post was empty.
+    - Fixed bug on Summary_CellRelation that was creating pairs of frequencies where Freq_Pre or Freq_Post was empty.
 
 ---
 
