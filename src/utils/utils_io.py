@@ -23,11 +23,11 @@ ENCODINGS_TRY = ["utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "cp1252", "utf
 @dataclass
 class Step0RunInfo:
     """Represents a single Step0 run under the logs root."""
-    name: str           # folder name (e.g. 20251203_0730_Step0)
-    path: str           # full folder path
-    date: str           # yyyymmdd
-    time_hhmm: str      # hhmm in 24h format
-    datetime_key: datetime      # yyyymmddhhmm for sorting
+    name: str               # folder name (e.g. 20251203_0730_Step0)
+    path: str               # full folder path
+    date: str               # yyyymmdd
+    time_hhmm: str          # hhmm in 24h format
+    datetime_key: datetime  # yyyymmddhhmm for sorting
 
 
 def parse_step0_run(entry_name: str, base_folder: str) -> Optional[Step0RunInfo]:

@@ -86,6 +86,7 @@ TABLES_ORDER: List[str] = []
 MODULE_NAMES = [
     "1. Configuration Audit & Logs Parser",
     "2. Consistency Check (Pre/Post Comparison)",
+    "2. Consistency Check (Bulk mode Pre/Post auto-detection)",
     "3. Initial Clean-Up (During Maintenance Window)",
     "4. Final Clean-Up (After Retune is completed)",
 ]
@@ -512,82 +513,84 @@ def run_configuration_audit(
     allowed_n77_ssb_post_csv = normalize_csv_list(allowed_n77_ssb_post_csv or "")
     allowed_n77_arfcn_post_csv = normalize_csv_list(allowed_n77_arfcn_post_csv or "")
 
+    # SSB Pre/Post
+    try:
+        local_n77_ssb_pre = int(n77_ssb_pre) if n77_ssb_pre else int(DEFAULT_N77_SSB_PRE)
+    except ValueError:
+        local_n77_ssb_pre = int(DEFAULT_N77_SSB_PRE)
+
+    try:
+        local_n77_ssb_post = int(n77_ssb_post) if n77_ssb_post else int(DEFAULT_N77_SSBQ_POST)
+    except ValueError:
+        local_n77_ssb_post = int(DEFAULT_N77_SSBQ_POST)
+
+    # N77B SSB
+    local_n77b_ssb = n77b_ssb
+    if local_n77b_ssb:
+        try:
+            local_n77b_ssb = int(local_n77b_ssb)
+        except ValueError:
+            print(f"{module_name} [WARN] Invalid N77B SSB frequency '{local_n77b_ssb}'. Ignoring.")
+            local_n77b_ssb = None
+
+    # Allowed sets (PRE)
+    default_n77_ssb_pre_list = [local_n77_ssb_post, 653952]
+    default_n77_pre_list = [654652, 655324, 655984, 656656]
+
+    allowed_n77_ssb_pre = parse_arfcn_csv_to_set(
+        csv_text=allowed_n77_ssb_pre_csv,
+        default_values=default_n77_ssb_pre_list,
+        label="Allowed N77 SSB (Pre)",
+    )
+    allowed_n77_arfcn_pre = parse_arfcn_csv_to_set(
+        csv_text=allowed_n77_arfcn_pre_csv,
+        default_values=default_n77_pre_list,
+        label="Allowed N77 ARFCN (Pre)",
+    )
+
+    # Allowed sets (POST) – by default same values, but independent set
+    default_n77_ssb_post_list = [local_n77_ssb_post, 653952]
+    default_n77_post_list = [654652, 655324, 655984, 656656]
+
+    allowed_n77_ssb_post = parse_arfcn_csv_to_set(
+        csv_text=allowed_n77_ssb_post_csv,
+        default_values=default_n77_ssb_post_list,
+        label="Allowed N77 SSB (Post)",
+    )
+    allowed_n77_arfcn_post = parse_arfcn_csv_to_set(
+        csv_text=allowed_n77_arfcn_post_csv,
+        default_values=default_n77_post_list,
+        label="Allowed N77 ARFCN (Post)",
+    )
+
+    # Print ConfigurationAudit Settings:
+    print(f"{module_name} Configuration Audit Settings:")
+    print(f"{module_name} Using old N77 SSB = {local_n77_ssb_pre} --> new N77 SSB = {local_n77_ssb_post}")
+    if local_n77b_ssb is not None:
+        print(f"{module_name} N77B SSB = {local_n77b_ssb}")
+    else:
+        print(f"{module_name} N77B SSB not provided or invalid.")
+
+    print(f"{module_name} Allowed N77 SSB set (Pre)    = {sorted(allowed_n77_ssb_pre)}")
+    print(f"{module_name} Allowed N77 ARFCN set (Pre)  = {sorted(allowed_n77_arfcn_pre)}")
+    print(f"{module_name} Allowed N77 SSB set (Post)   = {sorted(allowed_n77_ssb_post)}")
+    print(f"{module_name} Allowed N77 ARFCN set (Post) = {sorted(allowed_n77_arfcn_post)}")
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    versioned_suffix = f"{timestamp}_v{TOOL_VERSION}"
+
     def run_for_folder(folder: str) -> Optional[str]:
         """
         Run ConfigurationAudit for a single folder that is already known
         to contain valid logs.
         """
-        print(f"{module_name} Running…")
+        print(f"{module_name} Running Audit…")
         print(f"{module_name} Input folder: '{pretty_path(folder)}'")
         if freq_filters_csv:
             print(f"{module_name} Summary column filters: {freq_filters_csv}")
 
         # Use long-path version for filesystem operations
         folder_fs = to_long_path(folder) if folder else folder
-
-        # SSB Pre/Post
-        try:
-            local_n77_ssb_pre = int(n77_ssb_pre) if n77_ssb_pre else int(DEFAULT_N77_SSB_PRE)
-        except ValueError:
-            local_n77_ssb_pre = int(DEFAULT_N77_SSB_PRE)
-
-        try:
-            local_n77_ssb_post = int(n77_ssb_post) if n77_ssb_post else int(DEFAULT_N77_SSBQ_POST)
-        except ValueError:
-            local_n77_ssb_post = int(DEFAULT_N77_SSBQ_POST)
-
-        # N77B SSB
-        local_n77b_ssb = n77b_ssb
-        if local_n77b_ssb:
-            try:
-                local_n77b_ssb = int(local_n77b_ssb)
-            except ValueError:
-                print(f"{module_name} [WARN] Invalid N77B SSB frequency '{local_n77b_ssb}'. Ignoring.")
-                local_n77b_ssb = None
-
-        # Allowed sets (PRE)
-        default_n77_ssb_pre_list = [local_n77_ssb_post, 653952]
-        default_n77_pre_list = [654652, 655324, 655984, 656656]
-
-        allowed_n77_ssb_pre = parse_arfcn_csv_to_set(
-            csv_text=allowed_n77_ssb_pre_csv,
-            default_values=default_n77_ssb_pre_list,
-            label="Allowed N77 SSB (Pre)",
-        )
-        allowed_n77_arfcn_pre = parse_arfcn_csv_to_set(
-            csv_text=allowed_n77_arfcn_pre_csv,
-            default_values=default_n77_pre_list,
-            label="Allowed N77 ARFCN (Pre)",
-        )
-
-        # Allowed sets (POST) – by default same values, but independent set
-        default_n77_ssb_post_list = [local_n77_ssb_post, 653952]
-        default_n77_post_list = [654652, 655324, 655984, 656656]
-
-        allowed_n77_ssb_post = parse_arfcn_csv_to_set(
-            csv_text=allowed_n77_ssb_post_csv,
-            default_values=default_n77_ssb_post_list,
-            label="Allowed N77 SSB (Post)",
-        )
-        allowed_n77_arfcn_post = parse_arfcn_csv_to_set(
-            csv_text=allowed_n77_arfcn_post_csv,
-            default_values=default_n77_post_list,
-            label="Allowed N77 ARFCN (Post)",
-        )
-
-        print(f"{module_name} Using old N77 SSB = {local_n77_ssb_pre} --> new N77 SSB = {local_n77_ssb_post}")
-        if local_n77b_ssb is not None:
-            print(f"{module_name} N77B SSB = {local_n77b_ssb}")
-        else:
-            print(f"{module_name} N77B SSB not provided or invalid.")
-
-        print(f"{module_name} Allowed N77 SSB set (Pre)  = {sorted(allowed_n77_ssb_pre)}")
-        print(f"{module_name} Allowed N77 ARFCN set (Pre) = {sorted(allowed_n77_arfcn_pre)}")
-        print(f"{module_name} Allowed N77 SSB set (Post) = {sorted(allowed_n77_ssb_post)}")
-        print(f"{module_name} Allowed N77 ARFCN set (Post)= {sorted(allowed_n77_arfcn_post)}")
-
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        versioned_suffix = f"{timestamp}_v{TOOL_VERSION}"
 
         # Create dedicated output folder for ConfigurationAudit
         output_dir = os.path.join(folder_fs, f"ConfigurationAudit_{versioned_suffix}")
@@ -755,7 +758,7 @@ def run_consistency_checks(
       processing is performed.
     """
     module_name = "[Consistency Checks (Pre/Post Comparison)]"
-    print(f"{module_name} Running…")
+    print(f"{module_name} Running Consistency Check…")
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     versioned_suffix = f"{timestamp}_v{TOOL_VERSION}"
@@ -960,7 +963,7 @@ def run_initial_cleanup(input_dir: str, *_args) -> None:
     module_name = "[Initial Clean-Up]"
     input_dir_fs = to_long_path(input_dir) if input_dir else input_dir
 
-    print(f"{module_name} Running…")
+    print(f"{module_name} Running Initial Clean-up…")
     print(f"{module_name} Input folder: '{pretty_path(input_dir_fs)}'")
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -979,7 +982,7 @@ def run_final_cleanup(input_dir: str, *_args) -> None:
     module_name = "[Final Clean-Up]"
     input_dir_fs = to_long_path(input_dir) if input_dir else input_dir
 
-    print(f"{module_name} Running…")
+    print(f"{module_name} Running Final Clean-up…")
     print(f"{module_name} Input folder: '{pretty_path(input_dir_fs)}'")
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")

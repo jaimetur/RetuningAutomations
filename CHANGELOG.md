@@ -26,6 +26,7 @@
 
   - #### 🚀 Enhancements:
     - Added column `GNBCUCPFunction` to NR tables in `ConcistencyCheck` module to be able to filter those relations of interest.
+    - Deleted unnecessary columns on all `_new`, `_missing`, `_disc` tables in `ConsistencyCheck` module.
   
   - #### 🐛 Bug fixes:
     - Minor bug fixing.
