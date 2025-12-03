@@ -16,6 +16,7 @@ from typing import Dict, Optional
 
 import pandas as pd
 
+from src.utils.utils_dataframe import ensure_column_after, drop_columns
 from src.utils.utils_io import to_long_path, pretty_path
 
 
@@ -120,43 +121,6 @@ def _resolve_nrcell_ref(row: pd.Series, relations_lookup: Dict[tuple, pd.Series]
     return ""
 
 
-def _ensure_column_before(df: pd.DataFrame, col_to_move: str, before_col: str) -> pd.DataFrame:
-    """
-    Utility to keep a helper column immediately before another column in the Excel output.
-    """
-    if df is None or df.empty:
-        return df
-    if col_to_move in df.columns and before_col in df.columns:
-        cols = list(df.columns)
-        cols.remove(col_to_move)
-        insert_pos = cols.index(before_col)
-        cols.insert(insert_pos, col_to_move)
-        df = df[cols]
-    return df
-
-def _ensure_column_after(df: pd.DataFrame, col_to_move: str, after_col: str) -> pd.DataFrame:
-    """
-    Utility to keep a helper column immediately after another column in the Excel output.
-    """
-    if df is None or df.empty:
-        return df
-    if col_to_move in df.columns and after_col in df.columns:
-        cols = list(df.columns)
-        cols.remove(col_to_move)
-        insert_pos = cols.index(after_col) + 1
-        cols.insert(insert_pos, col_to_move)
-        df = df[cols]
-    return df
-
-def _drop_columns(df: pd.DataFrame, unwanted) -> pd.DataFrame:
-    """
-    Drop a list of unwanted columns if they exist; used to keep Excel output compact.
-    """
-    if df is None or df.empty:
-        return df
-    return df.drop(columns=[c for c in unwanted if c in df.columns], errors="ignore")
-
-
 # ----------------------------------------------------------------------
 #  BUILD CORRECTION COMMANDS
 # ----------------------------------------------------------------------
@@ -231,7 +195,7 @@ def build_gu_new(df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.D
         "reservedBy",
         "userLabel",
     ]
-    df = _drop_columns(df, unwanted)
+    df = drop_columns(df, unwanted)
     return df
 
 
@@ -356,7 +320,7 @@ def build_gu_missing(
         "timeOfCreation",
         "userLabel",
     ]
-    df = _drop_columns(df, unwanted)
+    df = drop_columns(df, unwanted)
     return df
 
 
@@ -419,7 +383,7 @@ def build_nr_new(df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.D
         df["Freq_Pre"] = ""
         if "Freq_Post" not in df.columns:
             df["Freq_Post"] = ""
-        df = _ensure_column_after(df, "GNBCUCPFunctionId", "NRCellRelationId")
+        df = ensure_column_after(df, "GNBCUCPFunctionId", "NRCellRelationId")
         return df
 
     df = df.copy()
@@ -458,7 +422,7 @@ def build_nr_new(df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.D
         return f"del NRCellCU={nr_cell_cu},NRCellRelation={nr_cell_rel}"
 
     df["Correction_Cmd"] = df.apply(build_command, axis=1)
-    df = _ensure_column_after(df, "GNBCUCPFunctionId", "NRCellRelationId")
+    df = ensure_column_after(df, "GNBCUCPFunctionId", "NRCellRelationId")
     return df
 
 
@@ -481,7 +445,7 @@ def build_nr_missing(
             df["NRCellRelationId"] = ""
         if "GNBCUCPFunctionId" not in df.columns:
             df["GNBCUCPFunctionId"] = ""
-        df = _ensure_column_after(df, "GNBCUCPFunctionId", "NRCellRelationId")
+        df = ensure_column_after(df, "GNBCUCPFunctionId", "NRCellRelationId")
         return df
 
     df = df.copy()
@@ -583,7 +547,7 @@ def build_nr_missing(
     if "nRCellRef" in df.columns:
         df["GNBCUCPFunctionId"] = df["nRCellRef"].astype(str).apply(_extract_gnbcucp_segment)
 
-    df = _ensure_column_after(df, "GNBCUCPFunctionId", "NRCellRelationId")
+    df = ensure_column_after(df, "GNBCUCPFunctionId", "NRCellRelationId")
 
     unwanted = [
         "acaMode",
@@ -602,7 +566,7 @@ def build_nr_missing(
         "preferredCellManual",
         "sCellCandidate",
     ]
-    df = _drop_columns(df, unwanted)
+    df = drop_columns(df, unwanted)
     return df
 
 
@@ -627,7 +591,7 @@ def build_nr_disc(
             work["NRCellRelationId"] = ""
         if "GNBCUCPFunctionId" not in work.columns:
             work["GNBCUCPFunctionId"] = ""
-        work = _ensure_column_after(work, "GNBCUCPFunctionId", "NRCellRelationId")
+        work = ensure_column_after(work, "GNBCUCPFunctionId", "NRCellRelationId")
         return work
 
     work = disc_df.copy()
@@ -663,7 +627,7 @@ def build_nr_disc(
         return del_cmd or create_cmd
 
     work["Correction_Cmd"] = [combine_cmds(d, c) for d, c in zip(del_cmds, create_cmds)]
-    work = _ensure_column_after(work, "GNBCUCPFunctionId", "NRCellRelationId")
+    work = ensure_column_after(work, "GNBCUCPFunctionId", "NRCellRelationId")
     return work
 
 
