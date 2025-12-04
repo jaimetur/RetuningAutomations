@@ -543,8 +543,14 @@ class ConsistencyChecks:
                     row["Freq_Pre"] = pre_freq_base.get(k, "")
                     row["Freq_Post"] = post_freq_base.get(k, "")
                 else:
-                    row["Freq_Pre"] = pre_slim.get(freq_col, pd.Series("", index=pre_slim.index)).loc[k] if k in pre_slim.index else ""
-                    row["Freq_Post"] = post_slim.get(freq_col, pd.Series("", index=post_slim.index)).loc[k] if k in post_slim.index else ""
+                    row["Freq_Pre"] = (
+                        pre_slim.get(freq_col, pd.Series("", index=pre_slim.index)).loc[k]
+                        if k in pre_slim.index else ""
+                    )
+                    row["Freq_Post"] = (
+                        post_slim.get(freq_col, pd.Series("", index=post_slim.index)).loc[k]
+                        if k in post_slim.index else ""
+                    )
 
                 required_cols = (
                     ["NodeId", "EUtranCellFDDId", "GUtranFreqRelationId", "GUtranCellRelationId"]
@@ -560,7 +566,21 @@ class ConsistencyChecks:
                     row[rc] = val
 
                 difflist = diff_cols_per_row.get(k, [])
-                row["DiffColumns"] = ", ".join(sorted(difflist))
+
+                # NEW: when there is no parameter difference but the frequency rule
+                #      says this relation is inconsistent (SSB not updated), add
+                #      a descriptive text in DiffColumns.
+                is_freq_only_mismatch = False
+                try:
+                    is_freq_only_mismatch = bool(freq_rule_mask.loc[k]) and not difflist
+                except KeyError:
+                    is_freq_only_mismatch = False
+
+                if is_freq_only_mismatch:
+                    row["DiffColumns"] = "SSB Post-Retuning keeps equal than SSB Pre-Retuning"
+                else:
+                    row["DiffColumns"] = ", ".join(sorted(difflist))
+
                 for c in difflist:
                     row[f"{c}_Pre"] = pre_common.loc[k, c]
                     row[f"{c}_Post"] = post_common.loc[k, c]
@@ -665,15 +685,28 @@ class ConsistencyChecks:
             for col in set(pre_keep.columns) | set(post_keep.columns):
                 if col in key_cols or col in ("Freq_Pre", "Freq_Post"):
                     continue
+
                 pre_col = f"{col}_PreSide"
                 post_col = f"{col}_PostSide"
-                if post_col in merged_all.columns:
-                    all_relations[col] = merged_all[post_col].where(
-                        merged_all[post_col].astype(str) != "",
-                        merged_all[pre_col] if pre_col in merged_all.columns else "",
+
+                if post_col in merged_all.columns and pre_col in merged_all.columns:
+                    # Prefer POST value only if it is not empty/NaN;
+                    # otherwise fall back to PRE value.
+                    post_series = merged_all[post_col]
+                    as_str = post_series.astype(str).str.strip().str.lower()
+                    is_empty = as_str.isin(("", "nan"))  # treat NaN and empty as "no value"
+
+                    all_relations[col] = post_series.where(
+                        ~is_empty,
+                        merged_all[pre_col],
                     )
+
+                elif post_col in merged_all.columns:
+                    all_relations[col] = merged_all[post_col]
+
                 elif pre_col in merged_all.columns:
                     all_relations[col] = merged_all[pre_col]
+
                 elif col in merged_all.columns:
                     all_relations[col] = merged_all[col]
 

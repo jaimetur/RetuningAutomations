@@ -282,10 +282,11 @@ def build_gu_missing(
     df["EUtranCellFDDId"] = df["EUtranCellFDDId"].astype(str).str.strip()
     df["GUtranCellRelationId"] = df["GUtranCellRelationId"].astype(str).str.strip()
 
-    relations_lookup = _build_lookup(relations_df, ["EUtranCellFDDId", "GUtranCellRelationId"])
+    relations_lookup = _build_lookup(relations_df, ["NodeId", "EUtranCellFDDId", "GUtranCellRelationId"])
 
     def from_rel(row: pd.Series, field: str) -> str:
         key = (
+            str(row.get("NodeId", "")).strip(),
             str(row.get("EUtranCellFDDId", "")).strip(),
             str(row.get("GUtranCellRelationId", "")).strip(),
         )
@@ -297,6 +298,7 @@ def build_gu_missing(
 
     def build_command(row: pd.Series) -> str:
         key = (
+            str(row.get("NodeId", "")).strip(),
             str(row.get("EUtranCellFDDId", "")).strip(),
             str(row.get("GUtranCellRelationId", "")).strip(),
         )
