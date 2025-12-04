@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional, Tuple, Dict
 
+from src.utils.utils_parsing import normalize_csv_list
+
 # ============================ OPTIONAL TKINTER UI =========================== #
 try:
     import tkinter as tk
@@ -30,7 +32,7 @@ class Step0RunInfo:
     datetime_key: datetime  # yyyymmddhhmm for sorting
 
 
-def parse_step0_run(entry_name: str, base_folder: str) -> Optional[Step0RunInfo]:
+def detect_step0_folders(entry_name: str, base_folder: str) -> Optional[Step0RunInfo]:
     """
     Parse a folder name as a Step0 run.
 
@@ -100,6 +102,144 @@ def parse_step0_run(entry_name: str, base_folder: str) -> Optional[Step0RunInfo]
         time_hhmm=time_token,
         datetime_key=dt
     )
+
+
+def detect_pre_post_subfolders(base_folder: str, BLACKLIST: tuple) -> Tuple[Optional[str], Optional[str], Dict[str, Tuple[str, str]]]:
+    """
+    Detect PRE/POST Step0 runs and, inside them, market subfolders.
+
+    Step0 run detection
+    -------------------
+    - Direct subfolders of base_folder are scanned.
+    - A subfolder is considered a "Step0 run" if:
+        * detect_step0_folders() returns a Step0RunInfo, i.e.:
+            - name contains 'Step0' (anywhere, case-insensitive), AND
+            - name starts with 'yyyymmdd_<time>', with <time> in HHMM or H[H](am|pm).
+
+    PRE/POST selection
+    ------------------
+    Among all detected Step0 runs:
+
+        POST run:
+            - The run with the greatest datetime_key (most recent date+time).
+
+        PRE run:
+            - If there is more than one run with the SAME date as POST:
+                  PRE = the earliest run of that date (smallest datetime_key
+                        among runs with that same date).
+            - Otherwise:
+                  PRE = the most recent run strictly BEFORE POST
+                        (largest datetime_key < POST.datetime_key).
+
+        If we cannot find BOTH PRE and POST, we return (None, None, {}).
+
+    Market detection
+    ----------------
+    For the selected PRE and POST base folders:
+
+        PRE_BASE  = folder of the PRE Step0 run.
+        POST_BASE = folder of the POST Step0 run.
+
+        - We look at DIRECT subfolders of PRE_BASE and POST_BASE.
+        - For each subfolder, we extract candidate market tokens using
+          _extract_market_tokens_from_name().
+
+        Example tokens:
+            'Indiana'                -> ['indiana']
+            'Indiana_Step0_pre'      -> ['indiana']
+            'step0_Indiana_batch_02' -> ['indiana']
+
+        - A token that appears in BOTH PRE and POST sides is considered a market.
+        - For each common token:
+            * pre_dir  = first PRE subfolder containing that token.
+            * post_dir = first POST subfolder containing that token.
+            * The market label is taken from the POST folder basename
+              (for nicer human-readable names).
+
+        If no market tokens are found on either side, we create a single
+        "GLOBAL" market pair using (PRE_BASE, POST_BASE).
+
+    Returns
+    -------
+        base_pre_dir, base_post_dir, market_pairs
+
+        where market_pairs is a dict:
+            { market_label -> (pre_market_dir, post_market_dir) }
+    """
+    try:
+        entries = [e for e in os.scandir(base_folder) if e.is_dir()]
+    except FileNotFoundError:
+        return None, None, {}
+
+        # ---------------- STEP0 RUN DETECTION ---------------- #
+    runs: List[Step0RunInfo] = []
+    # Skip Step0 candidate folders whose name contains blacklist tokens
+    for entry in entries:
+        name_low = entry.name.lower()
+        if any(tok in name_low for tok in BLACKLIST):
+            continue
+        step0_folder_parsed = detect_step0_folders(entry.name, base_folder)
+        if step0_folder_parsed:
+            runs.append(step0_folder_parsed)
+
+    if len(runs) < 2:
+        return None, None, {}
+
+    runs.sort(key=lambda r: r.datetime_key)
+
+    # POST = most recent
+    post_run = runs[-1]
+
+    # PRE selection
+    same_day = [r for r in runs if r.date == post_run.date]
+    if len(same_day) > 1:
+        pre_run = same_day[0]
+    else:
+        earlier = [r for r in runs if r.datetime_key < post_run.datetime_key]
+        if not earlier:
+            return None, None, {}
+        pre_run = earlier[-1]
+
+    base_pre = pre_run.path
+    base_post = post_run.path
+
+    # ---------------- MARKET DETECTION ---------------- #
+
+    def scan_side(root: str) -> Dict[str, List[str]]:
+        mapping: Dict[str, List[str]] = {}
+        try:
+            for e in os.scandir(root):
+                if not e.is_dir():
+                    continue
+                tokens = extract_tokens_dynamic(e.name)
+                for tok in tokens:
+                    mapping.setdefault(tok, []).append(e.path)
+        except FileNotFoundError:
+            pass
+        return mapping
+
+    pre_tokens = scan_side(base_pre)
+    post_tokens = scan_side(base_post)
+
+    common = set(pre_tokens.keys()) & set(post_tokens.keys())
+
+    market_pairs: Dict[str, Tuple[str, str]] = {}
+
+    if common:
+        for tok in sorted(common):
+            pre_dirs = sorted(pre_tokens[tok])
+            post_dirs = sorted(post_tokens[tok])
+
+            pre_dir = pre_dirs[0]
+            post_dir = post_dirs[0]
+
+            label = os.path.basename(post_dir)  # nicer for user
+            market_pairs[label] = (pre_dir, post_dir)
+    else:
+        # fallback: treat PRE/POST base as a single GLOBAL pair
+        market_pairs["GLOBAL"] = (base_pre, base_post)
+
+    return base_pre, base_post, market_pairs
 
 
 def read_text_with_encoding(path: str) -> Tuple[List[str], Optional[str]]:
@@ -225,200 +365,12 @@ def extract_tokens_dynamic(name: str) -> List[str]:
     return tokens
 
 
-def detect_pre_post_subfolders(base_folder: str, BLACKLIST: tuple) -> Tuple[Optional[str], Optional[str], Dict[str, Tuple[str, str]]]:
-    """
-    Detect PRE/POST Step0 runs and, inside them, market subfolders.
-
-    Step0 run detection
-    -------------------
-    - Direct subfolders of base_folder are scanned.
-    - A subfolder is considered a "Step0 run" if:
-        * parse_step0_run() returns a Step0RunInfo, i.e.:
-            - name contains 'Step0' (anywhere, case-insensitive), AND
-            - name starts with 'yyyymmdd_<time>', with <time> in HHMM or H[H](am|pm).
-
-    PRE/POST selection
-    ------------------
-    Among all detected Step0 runs:
-
-        POST run:
-            - The run with the greatest datetime_key (most recent date+time).
-
-        PRE run:
-            - If there is more than one run with the SAME date as POST:
-                  PRE = the earliest run of that date (smallest datetime_key
-                        among runs with that same date).
-            - Otherwise:
-                  PRE = the most recent run strictly BEFORE POST
-                        (largest datetime_key < POST.datetime_key).
-
-        If we cannot find BOTH PRE and POST, we return (None, None, {}).
-
-    Market detection
-    ----------------
-    For the selected PRE and POST base folders:
-
-        PRE_BASE  = folder of the PRE Step0 run.
-        POST_BASE = folder of the POST Step0 run.
-
-        - We look at DIRECT subfolders of PRE_BASE and POST_BASE.
-        - For each subfolder, we extract candidate market tokens using
-          _extract_market_tokens_from_name().
-
-        Example tokens:
-            'Indiana'                -> ['indiana']
-            'Indiana_Step0_pre'      -> ['indiana']
-            'step0_Indiana_batch_02' -> ['indiana']
-
-        - A token that appears in BOTH PRE and POST sides is considered a market.
-        - For each common token:
-            * pre_dir  = first PRE subfolder containing that token.
-            * post_dir = first POST subfolder containing that token.
-            * The market label is taken from the POST folder basename
-              (for nicer human-readable names).
-
-        If no market tokens are found on either side, we create a single
-        "GLOBAL" market pair using (PRE_BASE, POST_BASE).
-
-    Returns
-    -------
-        base_pre_dir, base_post_dir, market_pairs
-
-        where market_pairs is a dict:
-            { market_label -> (pre_market_dir, post_market_dir) }
-    """
-    try:
-        entries = [e for e in os.scandir(base_folder) if e.is_dir()]
-    except FileNotFoundError:
-        return None, None, {}
-
-        # ---------------- STEP0 RUN DETECTION ---------------- #
-    runs: List[Step0RunInfo] = []
-    # Skip Step0 candidate folders whose name contains blacklist tokens
-    for entry in entries:
-        name_low = entry.name.lower()
-        if any(tok in name_low for tok in BLACKLIST):
-            continue
-        parsed = parse_step0_run(entry.name, base_folder)
-        if parsed:
-            runs.append(parsed)
-
-    if len(runs) < 2:
-        return None, None, {}
-
-    runs.sort(key=lambda r: r.datetime_key)
-
-    # POST = most recent
-    post_run = runs[-1]
-
-    # PRE selection
-    same_day = [r for r in runs if r.date == post_run.date]
-    if len(same_day) > 1:
-        pre_run = same_day[0]
-    else:
-        earlier = [r for r in runs if r.datetime_key < post_run.datetime_key]
-        if not earlier:
-            return None, None, {}
-        pre_run = earlier[-1]
-
-    base_pre = pre_run.path
-    base_post = post_run.path
-
-    # ---------------- MARKET DETECTION ---------------- #
-
-    def scan_side(root: str) -> Dict[str, List[str]]:
-        mapping: Dict[str, List[str]] = {}
-        try:
-            for e in os.scandir(root):
-                if not e.is_dir():
-                    continue
-                tokens = extract_tokens_dynamic(e.name)
-                for tok in tokens:
-                    mapping.setdefault(tok, []).append(e.path)
-        except FileNotFoundError:
-            pass
-        return mapping
-
-    pre_tokens = scan_side(base_pre)
-    post_tokens = scan_side(base_post)
-
-    common = set(pre_tokens.keys()) & set(post_tokens.keys())
-
-    market_pairs: Dict[str, Tuple[str, str]] = {}
-
-    if common:
-        for tok in sorted(common):
-            pre_dirs = sorted(pre_tokens[tok])
-            post_dirs = sorted(post_tokens[tok])
-
-            pre_dir = pre_dirs[0]
-            post_dir = post_dirs[0]
-
-            label = os.path.basename(post_dir)  # nicer for user
-            market_pairs[label] = (pre_dir, post_dir)
-    else:
-        # fallback: treat PRE/POST base as a single GLOBAL pair
-        market_pairs["GLOBAL"] = (base_pre, base_post)
-
-    return base_pre, base_post, market_pairs
-
-
 def read_text_file(path: str) -> Tuple[List[str], Optional[str]]:
     """
     Thin wrapper around read_text_with_encoding to keep current behavior.
     Returns (lines, encoding_used).
     """
     return read_text_with_encoding(path)
-
-
-def _normalize_market_name(name: str) -> str:
-    """
-    Normalize a market folder name so that, for example,
-    '231_Indiana', '231-Indiana' and 'Indiana' match.
-
-    Used only for matching PRE/POST markets.
-    """
-    s = name.strip().lower()
-    # Strip leading digits + separators (underscore, hyphen, space)
-    s = re.sub(r"^\d+[_\-\s]*", "", s)
-    return s
-
-
-def normalize_csv_list(text: str) -> str:
-    """Normalize a comma-separated text into 'a,b,c' without extra spaces/empties."""
-    if not text:
-        return ""
-    items = [t.strip() for t in text.split(",")]
-    items = [t for t in items if t]
-    return ",".join(items)
-
-
-def parse_arfcn_csv_to_set(
-    csv_text: Optional[str],
-    default_values: List[int],
-    label: str,
-) -> set:
-    """
-    Helper to parse a CSV string into a set of integers.
-
-    - If csv_text is empty or all values are invalid, fall back to default_values.
-    - Logs warnings for invalid tokens.
-    """
-    values: List[int] = []
-    if csv_text:
-        for token in csv_text.split(","):
-            tok = token.strip()
-            if not tok:
-                continue
-            try:
-                values.append(int(tok))
-            except ValueError:
-                print(f"[Configuration Audit] [WARN] Ignoring invalid ARFCN '{tok}' in {label} list.")
-
-    if not values:
-        return set(default_values)
-
-    return set(values)
 
 
 def ensure_cfg_section(config_section, parser: configparser.ConfigParser) -> None:

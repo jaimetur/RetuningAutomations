@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional, Dict
 
 import pandas as pd
 
@@ -79,3 +79,72 @@ def drop_columns(df: pd.DataFrame, unwanted) -> pd.DataFrame:
     if df is None or df.empty:
         return df
     return df.drop(columns=[c for c in unwanted if c in df.columns], errors="ignore")
+
+
+def build_row_lookup(
+    relations_df: Optional[pd.DataFrame],
+    key_cols,
+    extra_strip_cols=None,
+) -> Dict[tuple, pd.Series]:
+    """
+    Build a dict[(keys...)] -> row from relations_df, stripping spaces.
+
+    This avoids repeating the same boilerplate in each builder.
+    """
+    lookup: Dict[tuple, pd.Series] = {}
+    if relations_df is None or relations_df.empty:
+        return lookup
+
+    rel = relations_df.copy()
+    cols_to_norm = list(key_cols) + list(extra_strip_cols or [])
+    for col in cols_to_norm:
+        if col not in rel.columns:
+            rel[col] = ""
+        rel[col] = rel[col].astype(str).str.strip()
+
+    for _, r in rel.iterrows():
+        key = tuple(str(r.get(k, "")).strip() for k in key_cols)
+        lookup[key] = r
+    return lookup
+
+
+def pick_non_empty_value(rel_row: Optional[pd.Series], row: pd.Series, field: str) -> str:
+    """
+    Prefer value from relations_df; if empty/NaN, fallback to value in df row.
+    Avoid returning literal 'nan'.
+    """
+    candidates = []
+    if rel_row is not None:
+        candidates.append(rel_row.get(field))
+    candidates.append(row.get(field))
+
+    for v in candidates:
+        if v is None:
+            continue
+        try:
+            if pd.isna(v):
+                continue
+        except TypeError:
+            pass
+        s = str(v).strip()
+        if not s or s.lower() == "nan":
+            continue
+        return s
+    return ""
+
+
+def concat_or_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
+    """
+    Return a single concatenated DataFrame or an empty one if none;
+    align on common columns when required.
+    """
+    if not dfs:
+        return pd.DataFrame()
+    try:
+        return pd.concat(dfs, ignore_index=True)
+    except Exception:
+        common_cols = set.intersection(*(set(d.columns) for d in dfs)) if dfs else set()
+        if not common_cols:
+            return pd.DataFrame()
+        dfs_aligned = [d[list(common_cols)].copy() for d in dfs]
+        return pd.concat(dfs_aligned, ignore_index=True)

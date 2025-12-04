@@ -4,6 +4,27 @@
 
 ---
 
+## Release: v0.3.11
+- ### Release Date: 2025-12-04
+
+- ### Main Changes:
+  
+  - #### 🚨 Breaking Changes:
+  
+  - #### 🌟 New Features:
+
+  - #### 🚀 Enhancements:
+    - Some code refactoring to clean-up duplicates functions and group them by logic.
+    - Output folder for `ConfigurationAudits` now has the market suffix if they have been executed from `ConsistencyCheck` module and any market have been detected.
+  
+  - #### 🐛 Bug fixes:
+    - Minor bug fixing.
+    
+  - #### 📚 Documentation: 
+    - Updated documentation with latest changes.
+
+---
+
 ## Release: v0.3.10
 - ### Release Date: 2025-12-03
 

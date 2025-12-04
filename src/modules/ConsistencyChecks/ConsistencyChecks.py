@@ -49,124 +49,6 @@ class ConsistencyChecks:
     # ------------------------------------------------------------------
     #  SHARED SMALL HELPERS (para reducir líneas en funciones repetidas)
     # ------------------------------------------------------------------
-    @staticmethod
-    def _ensure_column_before(df: pd.DataFrame, col_to_move: str, before_col: str) -> pd.DataFrame:
-        """
-        Utility to keep a helper column immediately before another column in the Excel output.
-        """
-        if df is None or df.empty:
-            return df
-        if col_to_move in df.columns and before_col in df.columns:
-            cols = list(df.columns)
-            cols.remove(col_to_move)
-            insert_pos = cols.index(before_col)
-            cols.insert(insert_pos, col_to_move)
-            df = df[cols]
-        return df
-
-    @staticmethod
-    def _drop_columns(df: pd.DataFrame, unwanted: List[str]) -> pd.DataFrame:
-        """
-        Drop a list of unwanted columns if they exist; used to keep Excel output compact.
-        """
-        if df is None or df.empty:
-            return df
-        return df.drop(columns=[c for c in unwanted if c in df.columns], errors="ignore")
-
-    @staticmethod
-    def _build_lookup(relations_df: Optional[pd.DataFrame],
-                      key_cols: List[str],
-                      extra_strip_cols: Optional[List[str]] = None) -> Dict[tuple, pd.Series]:
-        """
-        Build a dict[(keys...)] -> row from relations_df, stripping spaces and avoiding code duplication.
-        """
-        lookup: Dict[tuple, pd.Series] = {}
-        if relations_df is None or relations_df.empty:
-            return lookup
-
-        rel = relations_df.copy()
-        cols_to_norm = list(key_cols) + (extra_strip_cols or [])
-        for col in cols_to_norm:
-            if col not in rel.columns:
-                rel[col] = ""
-            rel[col] = rel[col].astype(str).str.strip()
-
-        for _, r in rel.iterrows():
-            key = tuple(str(r.get(k, "")).strip() for k in key_cols)
-            lookup[key] = r
-        return lookup
-
-    @staticmethod
-    def _pick_value(rel_row: Optional[pd.Series], row: pd.Series, field: str) -> str:
-        """
-        Prefer value from relations_df; if empty/NaN, fallback to value in df row.
-        Avoid returning literal 'nan'.
-        """
-        candidates = []
-        if rel_row is not None:
-            candidates.append(rel_row.get(field))
-        candidates.append(row.get(field))
-
-        for v in candidates:
-            if v is None:
-                continue
-            try:
-                if pd.isna(v):
-                    continue
-            except TypeError:
-                pass
-            s = str(v).strip()
-            if not s or s.lower() == "nan":
-                continue
-            return s
-        return ""
-
-    @staticmethod
-    def _extract_gnbcucp_segment(nrcell_ref: str) -> str:
-        """
-        Extract GNBCUCPFunction segment from a full nRCellRef string.
-
-        Example:
-          '...,GNBCUCPFunction=1,NRNetwork=1,ExternalGNBCUCPFunction=auto311_480_3_2509535,ExternalNRCellCU=auto41116222186'
-          -> 'GNBCUCPFunction=1,NRNetwork=1,ExternalGNBCUCPFunction=auto311_480_3_2509535,ExternalNRCellCU=auto41116222186'
-        """
-        if not isinstance(nrcell_ref, str):
-            return ""
-        pos = nrcell_ref.find("GNBCUCPFunction=")
-        if pos == -1:
-            return ""
-        return nrcell_ref[pos:].strip()
-
-    @staticmethod
-    def _resolve_nrcell_ref(row: pd.Series, relations_lookup: Dict[tuple, pd.Series]) -> str:
-        """
-        Prefer nRCellRef from relations_df; if empty, fallback to value in disc row.
-        """
-        key = (
-            str(row.get("NodeId", "")).strip(),
-            str(row.get("NRCellCUId", "")).strip(),
-            str(row.get("NRCellRelationId", "")).strip(),
-        )
-        rel_row = relations_lookup.get(key)
-        candidates = []
-        if rel_row is not None:
-            candidates.append(rel_row.get("nRCellRef"))
-        candidates.append(row.get("nRCellRef"))
-
-        for v in candidates:
-            if v is None:
-                continue
-            try:
-                if pd.isna(v):
-                    continue
-            except TypeError:
-                pass
-            s = str(v).strip()
-            if not s or s.lower() == "nan":
-                continue
-            return s
-        return ""
-
     # --------- folder helpers ---------
     @staticmethod
     def _detect_prepost(folder_name: str) -> Optional[str]:
@@ -857,20 +739,33 @@ class ConsistencyChecks:
         suf = f"_{versioned_suffix}" if versioned_suffix else ""
 
         # Path for output files
-        excel_all = os.path.join(output_dir, f"CellRelation{suf}.xlsx")
-        excel_disc = os.path.join(output_dir, f"ConsistencyChecks_CellRelation{suf}.xlsx")
+        excel_cell_relation = os.path.join(output_dir, f"CellRelation{suf}.xlsx")
+        excel_cc_cell_relation = os.path.join(output_dir, f"ConsistencyChecks_CellRelation{suf}.xlsx")
 
         # Convert paths to long-path form on Windows to avoid MAX_PATH issues
-        excel_all_long = to_long_path(excel_all)
-        excel_disc_long = to_long_path(excel_disc)
+        excel_cell_relation_long = to_long_path(excel_cell_relation)
+        excel_cc_cell_relation_long = to_long_path(excel_cc_cell_relation)
 
-        with pd.ExcelWriter(excel_all_long, engine="openpyxl") as writer:
+        # -------------------------------------------------------------------
+        #  Write CellRelations.xlsx
+        # -------------------------------------------------------------------
+        with pd.ExcelWriter(excel_cell_relation_long, engine="openpyxl") as writer:
             if "GUtranCellRelation" in self.tables:
                 self.tables["GUtranCellRelation"].to_excel(writer, sheet_name="GU_all", index=False)
             if "NRCellRelation" in self.tables:
                 self.tables["NRCellRelation"].to_excel(writer, sheet_name="NR_all", index=False)
 
-        with pd.ExcelWriter(excel_disc_long, engine="openpyxl") as writer:
+                # -------------------------------------------------------------------
+                #  APPLY HEADER STYLING + AUTO-FIT COLUMNS FOR ALL SHEETS
+                # -------------------------------------------------------------------
+                # New: apply header style + autofit columns (replaces the manual loop)
+                style_headers_autofilter_and_autofit(writer, freeze_header=True, align="left")
+
+
+        # -------------------------------------------------------------------
+        #  Write ConsistencyChecks_CellRelations.xlsx
+        # -------------------------------------------------------------------
+        with pd.ExcelWriter(excel_cc_cell_relation_long, engine="openpyxl") as writer:
             # Summary
             summary_rows = []
             if results:
@@ -1057,7 +952,6 @@ class ConsistencyChecks:
             # -------------------------------------------------------------------
             #  APPLY HEADER STYLING + AUTO-FIT COLUMNS FOR ALL SHEETS
             # -------------------------------------------------------------------
-
             # Keep: color the 'Summary*' tabs in green
             color_summary_tabs(writer, prefix="Summary", rgb_hex="00B050")
 

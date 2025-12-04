@@ -30,7 +30,8 @@ from pathlib import Path
 from src.utils.utils_datetime import format_duration_hms
 from src.utils.utils_dialog import tk, ttk, filedialog, messagebox, ask_reopen_launcher, ask_yes_no_dialog, ask_yes_no_dialog_custom
 from src.utils.utils_infrastructure import LoggerDual
-from src.utils.utils_io import normalize_csv_list, parse_arfcn_csv_to_set, load_cfg_values, save_cfg_values, log_module_exception, to_long_path, pretty_path, folder_has_valid_logs, detect_pre_post_subfolders
+from src.utils.utils_io import load_cfg_values, save_cfg_values, log_module_exception, to_long_path, pretty_path, folder_has_valid_logs, detect_pre_post_subfolders
+from src.utils.utils_parsing import normalize_csv_list, parse_arfcn_csv_to_set
 
 from src.modules.ConsistencyChecks.ConsistencyChecks import ConsistencyChecks
 from src.modules.ConfigurationAudit import ConfigurationAudit
@@ -41,8 +42,8 @@ from src.modules.CleanUp.FinalCleanUp import FinalCleanUp
 # ================================ VERSIONING ================================ #
 
 TOOL_NAME           = "RetuningAutomations"
-TOOL_VERSION        = "0.3.10"
-TOOL_DATE           = "2025-12-03"
+TOOL_VERSION        = "0.3.11"
+TOOL_DATE           = "2025-12-04"
 TOOL_NAME_VERSION   = f"{TOOL_NAME}_v{TOOL_VERSION}"
 COPYRIGHT_TEXT      = "(c) 2025 - Jaime Tur (jaime.tur@ericsson.com)"
 TOOL_DESCRIPTION    = textwrap.dedent(f"""
@@ -545,6 +546,8 @@ def run_configuration_audit(
     allowed_n77_arfcn_pre_csv: Optional[str] = None,
     allowed_n77_ssb_post_csv: Optional[str] = None,
     allowed_n77_arfcn_post_csv: Optional[str] = None,
+    versioned_suffix: Optional[str] = None,
+    market_label: Optional[str] = None,
 ) -> Optional[str]:
     """
     Run ConfigurationAudit on a folder or recursively on all its subfolders
@@ -645,8 +648,9 @@ def run_configuration_audit(
     print(f"{module_name} Allowed N77 SSB set (Post)   = {sorted(allowed_n77_ssb_post)}")
     print(f"{module_name} Allowed N77 ARFCN set (Post) = {sorted(allowed_n77_arfcn_post)}")
 
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    versioned_suffix = f"{timestamp}_v{TOOL_VERSION}"
+    if not versioned_suffix:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        versioned_suffix = f"{timestamp}_v{TOOL_VERSION}"
 
     def run_for_folder(folder: str) -> Optional[str]:
         """
@@ -661,8 +665,15 @@ def run_configuration_audit(
         # Use long-path version for filesystem operations
         folder_fs = to_long_path(folder) if folder else folder
 
+        # If market_label is provided and not GLOBAL, append it as suffix
+        suffix = ""
+        if market_label:
+            ml = str(market_label).strip()
+            if ml and ml.upper() != "GLOBAL":
+                suffix = f"_{ml}"
+
         # Create dedicated output folder for ConfigurationAudit
-        output_dir = os.path.join(folder_fs, f"ConfigurationAudit_{versioned_suffix}")
+        output_dir = os.path.join(folder_fs, f"ConfigurationAudit_{versioned_suffix}{suffix}")
         os.makedirs(output_dir, exist_ok=True)
         print(f"{module_name} Output folder: '{pretty_path(output_dir)}'")
 
@@ -841,6 +852,8 @@ def run_consistency_checks_for_market_pairs(
             allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
             allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
             allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
+            versioned_suffix=versioned_suffix,
+            market_label=market_label,
         )
         print("-" * 80)
         if pre_audit_excel:
@@ -860,6 +873,8 @@ def run_consistency_checks_for_market_pairs(
             allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
             allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
             allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
+            versioned_suffix=versioned_suffix,
+            market_label=market_label,
         )
         print("-" * 80)
         if post_audit_excel:
