@@ -739,20 +739,33 @@ class ConsistencyChecks:
         suf = f"_{versioned_suffix}" if versioned_suffix else ""
 
         # Path for output files
-        excel_all = os.path.join(output_dir, f"CellRelation{suf}.xlsx")
-        excel_disc = os.path.join(output_dir, f"ConsistencyChecks_CellRelation{suf}.xlsx")
+        excel_cell_relation = os.path.join(output_dir, f"CellRelation{suf}.xlsx")
+        excel_cc_cell_relation = os.path.join(output_dir, f"ConsistencyChecks_CellRelation{suf}.xlsx")
 
         # Convert paths to long-path form on Windows to avoid MAX_PATH issues
-        excel_all_long = to_long_path(excel_all)
-        excel_disc_long = to_long_path(excel_disc)
+        excel_cell_relation_long = to_long_path(excel_cell_relation)
+        excel_cc_cell_relation_long = to_long_path(excel_cc_cell_relation)
 
-        with pd.ExcelWriter(excel_all_long, engine="openpyxl") as writer:
+        # -------------------------------------------------------------------
+        #  Write CellRelations.xlsx
+        # -------------------------------------------------------------------
+        with pd.ExcelWriter(excel_cell_relation_long, engine="openpyxl") as writer:
             if "GUtranCellRelation" in self.tables:
                 self.tables["GUtranCellRelation"].to_excel(writer, sheet_name="GU_all", index=False)
             if "NRCellRelation" in self.tables:
                 self.tables["NRCellRelation"].to_excel(writer, sheet_name="NR_all", index=False)
 
-        with pd.ExcelWriter(excel_disc_long, engine="openpyxl") as writer:
+                # -------------------------------------------------------------------
+                #  APPLY HEADER STYLING + AUTO-FIT COLUMNS FOR ALL SHEETS
+                # -------------------------------------------------------------------
+                # New: apply header style + autofit columns (replaces the manual loop)
+                style_headers_autofilter_and_autofit(writer, freeze_header=True, align="left")
+
+
+        # -------------------------------------------------------------------
+        #  Write ConsistencyChecks_CellRelations.xlsx
+        # -------------------------------------------------------------------
+        with pd.ExcelWriter(excel_cc_cell_relation_long, engine="openpyxl") as writer:
             # Summary
             summary_rows = []
             if results:
@@ -939,7 +952,6 @@ class ConsistencyChecks:
             # -------------------------------------------------------------------
             #  APPLY HEADER STYLING + AUTO-FIT COLUMNS FOR ALL SHEETS
             # -------------------------------------------------------------------
-
             # Keep: color the 'Summary*' tabs in green
             color_summary_tabs(writer, prefix="Summary", rgb_hex="00B050")
 
