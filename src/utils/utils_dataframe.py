@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 
 from typing import List
 
@@ -39,3 +40,42 @@ def make_index_by_keys(df: pd.DataFrame, keys: List[str]) -> pd.DataFrame:
     if dfx.index.has_duplicates:
         dfx = dfx[~dfx.index.duplicated(keep="last")]
     return dfx
+
+
+def ensure_column_before(df: pd.DataFrame, col_to_move: str, before_col: str) -> pd.DataFrame:
+    """
+    Utility to keep a helper column immediately before another column in the Excel output.
+    """
+    if df is None or df.empty:
+        return df
+    if col_to_move in df.columns and before_col in df.columns:
+        cols = list(df.columns)
+        cols.remove(col_to_move)
+        insert_pos = cols.index(before_col)
+        cols.insert(insert_pos, col_to_move)
+        df = df[cols]
+    return df
+
+
+def ensure_column_after(df: pd.DataFrame, col_to_move: str, after_col: str) -> pd.DataFrame:
+    """
+    Utility to keep a helper column immediately after another column in the Excel output.
+    """
+    if df is None or df.empty:
+        return df
+    if col_to_move in df.columns and after_col in df.columns:
+        cols = list(df.columns)
+        cols.remove(col_to_move)
+        insert_pos = cols.index(after_col) + 1
+        cols.insert(insert_pos, col_to_move)
+        df = df[cols]
+    return df
+
+
+def drop_columns(df: pd.DataFrame, unwanted) -> pd.DataFrame:
+    """
+    Drop a list of unwanted columns if they exist; used to keep Excel output compact.
+    """
+    if df is None or df.empty:
+        return df
+    return df.drop(columns=[c for c in unwanted if c in df.columns], errors="ignore")

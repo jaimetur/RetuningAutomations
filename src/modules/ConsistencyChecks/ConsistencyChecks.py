@@ -6,6 +6,7 @@ from typing import Dict, Optional, List
 
 import pandas as pd
 
+from src.modules.ConsistencyChecks.cc_correction_cmd import build_gu_new, build_gu_missing, build_gu_disc, build_nr_new, build_nr_missing, build_nr_disc, export_correction_cmd_texts
 from src.utils.utils_dataframe import select_latest_by_date, normalize_df, make_index_by_keys
 from src.utils.utils_datetime import extract_date
 from src.utils.utils_excel import color_summary_tabs, style_headers_autofilter_and_autofit, apply_alternating_category_row_fills
@@ -13,17 +14,20 @@ from src.utils.utils_frequency import detect_freq_column, detect_key_columns, ex
 from src.utils.utils_io import read_text_lines, to_long_path, pretty_path
 from src.utils.utils_parsing import find_all_subnetwork_headers, extract_mo_from_subnetwork_line, parse_table_slice_from_subnetwork
 
-
 class ConsistencyChecks:
     """
     Loads and compares GU/NR relation tables before (Pre) and after (Post) a refarming process.
     (Se mantiene la funcionalidad exacta.)
     """
-    PRE_TOKENS = ("pre")
-    POST_TOKENS = ("post")
+    PRE_TOKENS = ("pre",)   # mantenemos la semántica previa (antes: ("pre", "step0"))
+    POST_TOKENS = ("post",)
     DATE_RE = re.compile(r"(?P<date>(19|20)\d{6})")  # yyyymmdd
     SUMMARY_RE = re.compile(r"^\s*\d+\s+instance\(s\)\s*$", re.IGNORECASE)
 
+
+    # ------------------------------------------------------------------
+    #  CONSTRUCTOR
+    # ------------------------------------------------------------------
     def __init__(self, n77_ssb_pre: Optional[str] = None, n77_ssb_post: Optional[str] = None) -> None:
         # NEW: store N77 SSB frequencies for Pre and Post
         self.n77_ssb_pre: Optional[str] = n77_ssb_pre
@@ -42,9 +46,130 @@ class ConsistencyChecks:
         self.audit_pre_excel: Optional[str] = None
         self.audit_post_excel: Optional[str] = None
 
+    # ------------------------------------------------------------------
+    #  SHARED SMALL HELPERS (para reducir líneas en funciones repetidas)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _ensure_column_before(df: pd.DataFrame, col_to_move: str, before_col: str) -> pd.DataFrame:
+        """
+        Utility to keep a helper column immediately before another column in the Excel output.
+        """
+        if df is None or df.empty:
+            return df
+        if col_to_move in df.columns and before_col in df.columns:
+            cols = list(df.columns)
+            cols.remove(col_to_move)
+            insert_pos = cols.index(before_col)
+            cols.insert(insert_pos, col_to_move)
+            df = df[cols]
+        return df
+
+    @staticmethod
+    def _drop_columns(df: pd.DataFrame, unwanted: List[str]) -> pd.DataFrame:
+        """
+        Drop a list of unwanted columns if they exist; used to keep Excel output compact.
+        """
+        if df is None or df.empty:
+            return df
+        return df.drop(columns=[c for c in unwanted if c in df.columns], errors="ignore")
+
+    @staticmethod
+    def _build_lookup(relations_df: Optional[pd.DataFrame],
+                      key_cols: List[str],
+                      extra_strip_cols: Optional[List[str]] = None) -> Dict[tuple, pd.Series]:
+        """
+        Build a dict[(keys...)] -> row from relations_df, stripping spaces and avoiding code duplication.
+        """
+        lookup: Dict[tuple, pd.Series] = {}
+        if relations_df is None or relations_df.empty:
+            return lookup
+
+        rel = relations_df.copy()
+        cols_to_norm = list(key_cols) + (extra_strip_cols or [])
+        for col in cols_to_norm:
+            if col not in rel.columns:
+                rel[col] = ""
+            rel[col] = rel[col].astype(str).str.strip()
+
+        for _, r in rel.iterrows():
+            key = tuple(str(r.get(k, "")).strip() for k in key_cols)
+            lookup[key] = r
+        return lookup
+
+    @staticmethod
+    def _pick_value(rel_row: Optional[pd.Series], row: pd.Series, field: str) -> str:
+        """
+        Prefer value from relations_df; if empty/NaN, fallback to value in df row.
+        Avoid returning literal 'nan'.
+        """
+        candidates = []
+        if rel_row is not None:
+            candidates.append(rel_row.get(field))
+        candidates.append(row.get(field))
+
+        for v in candidates:
+            if v is None:
+                continue
+            try:
+                if pd.isna(v):
+                    continue
+            except TypeError:
+                pass
+            s = str(v).strip()
+            if not s or s.lower() == "nan":
+                continue
+            return s
+        return ""
+
+    @staticmethod
+    def _extract_gnbcucp_segment(nrcell_ref: str) -> str:
+        """
+        Extract GNBCUCPFunction segment from a full nRCellRef string.
+
+        Example:
+          '...,GNBCUCPFunction=1,NRNetwork=1,ExternalGNBCUCPFunction=auto311_480_3_2509535,ExternalNRCellCU=auto41116222186'
+          -> 'GNBCUCPFunction=1,NRNetwork=1,ExternalGNBCUCPFunction=auto311_480_3_2509535,ExternalNRCellCU=auto41116222186'
+        """
+        if not isinstance(nrcell_ref, str):
+            return ""
+        pos = nrcell_ref.find("GNBCUCPFunction=")
+        if pos == -1:
+            return ""
+        return nrcell_ref[pos:].strip()
+
+    @staticmethod
+    def _resolve_nrcell_ref(row: pd.Series, relations_lookup: Dict[tuple, pd.Series]) -> str:
+        """
+        Prefer nRCellRef from relations_df; if empty, fallback to value in disc row.
+        """
+        key = (
+            str(row.get("NodeId", "")).strip(),
+            str(row.get("NRCellCUId", "")).strip(),
+            str(row.get("NRCellRelationId", "")).strip(),
+        )
+        rel_row = relations_lookup.get(key)
+        candidates = []
+        if rel_row is not None:
+            candidates.append(rel_row.get("nRCellRef"))
+        candidates.append(row.get("nRCellRef"))
+
+        for v in candidates:
+            if v is None:
+                continue
+            try:
+                if pd.isna(v):
+                    continue
+            except TypeError:
+                pass
+            s = str(v).strip()
+            if not s or s.lower() == "nan":
+                continue
+            return s
+        return ""
+
     # --------- folder helpers ---------
     @staticmethod
-    def detect_prepost(folder_name: str) -> Optional[str]:
+    def _detect_prepost(folder_name: str) -> Optional[str]:
         name = folder_name.lower()
         if any(tok in name for tok in ConsistencyChecks.PRE_TOKENS):
             return "Pre"
@@ -53,17 +178,54 @@ class ConsistencyChecks:
         return None
 
     @staticmethod
-    def insert_front_columns(df: pd.DataFrame, prepost: str, date_str: Optional[str]) -> pd.DataFrame:
+    def _insert_front_columns(df: pd.DataFrame, prepost: str, date_str: Optional[str]) -> pd.DataFrame:
         df = df.copy()
         df.insert(0, "Pre/Post", prepost)
         df.insert(1, "Date", date_str if date_str else "")
         return df
 
     @staticmethod
-    def table_key_name(table_base: str) -> str:
+    def _table_key_name(table_base: str) -> str:
         return table_base.strip()
 
     # ----------------------------- LOADING ----------------------------- #
+    def collect_from_dir(self, dir_path: str, prepost: str, collected: Dict[str, List[pd.DataFrame]]) -> None:
+        """
+        Small helper used in both legacy and dual-input modes to avoid duplication.
+        """
+        date_str = extract_date(os.path.basename(dir_path))
+        for fname in os.listdir(dir_path):
+            lower = fname.lower()
+            if not (lower.endswith(".log") or lower.endswith(".txt")):
+                continue
+            fpath = os.path.join(dir_path, fname)
+            if not os.path.isfile(fpath):
+                continue
+
+            lines = read_text_lines(fpath)
+            if not lines:
+                continue
+
+            headers = find_all_subnetwork_headers(lines)
+            if not headers:
+                continue
+            headers.append(len(lines))
+
+            for i in range(len(headers) - 1):
+                h, nxt = headers[i], headers[i + 1]
+                mo = extract_mo_from_subnetwork_line(lines[h])
+                if mo not in ("GUtranCellRelation", "NRCellRelation"):
+                    continue
+
+                df = parse_table_slice_from_subnetwork(lines, h, nxt)
+                if df is None or df.empty:
+                    continue
+
+                df = self._insert_front_columns(df, prepost, date_str)
+                # NEW: store file path only for Summary; do not persist it inside DataFrames
+                self._source_paths.setdefault(mo, {}).setdefault(prepost, []).append((date_str or "", fpath))
+                collected[mo].append(df)
+
     def loadPrePost(self, input_dir_or_pre: str, post_dir: Optional[str] = None) -> Dict[str, pd.DataFrame]:
         """
         Load Pre/Post either from:
@@ -72,75 +234,34 @@ class ConsistencyChecks:
 
         Returns a dict with concatenated GU/NR DataFrames in self.tables.
         """
+        collected: Dict[str, List[pd.DataFrame]] = {"GUtranCellRelation": [], "NRCellRelation": []}
+        self.pre_folder_found = False
+        self.post_folder_found = False
+
         if post_dir is None:
             # ===== Legacy single-folder mode (original behavior) =====
             input_dir = input_dir_or_pre
             if not os.path.isdir(input_dir):
                 raise NotADirectoryError(f"Invalid directory: {input_dir}")
 
-            collected: Dict[str, List[pd.DataFrame]] = {"GUtranCellRelation": [], "NRCellRelation": []}
-            self.pre_folder_found = False
-            self.post_folder_found = False
-
             for entry in os.scandir(input_dir):
                 if not entry.is_dir():
                     continue
-                prepost = self.detect_prepost(entry.name)
+                prepost = self._detect_prepost(entry.name)
                 if not prepost:
                     continue
                 if prepost == "Pre":
                     self.pre_folder_found = True
                 elif prepost == "Post":
                     self.post_folder_found = True
-
-                date_str = extract_date(entry.name)
-
-                for fname in os.listdir(entry.path):
-                    lower = fname.lower()
-                    if not (lower.endswith(".log") or lower.endswith(".txt")):
-                        continue
-                    fpath = os.path.join(entry.path, fname)
-                    if not os.path.isfile(fpath):
-                        continue
-
-                    lines = read_text_lines(fpath)
-                    if not lines:
-                        continue
-
-                    headers = find_all_subnetwork_headers(lines)
-                    if not headers:
-                        continue
-                    headers.append(len(lines))
-
-                    for i in range(len(headers) - 1):
-                        h, nxt = headers[i], headers[i + 1]
-                        mo = extract_mo_from_subnetwork_line(lines[h])
-                        if mo not in ("GUtranCellRelation", "NRCellRelation"):
-                            continue
-
-                        df = parse_table_slice_from_subnetwork(lines, h, nxt)
-                        if df is None or df.empty:
-                            continue
-
-                        df = self.insert_front_columns(df, prepost, date_str)
-                        # NEW: store file path only for Summary; do not persist it inside DataFrames
-                        self._source_paths.setdefault(mo, {}).setdefault(prepost, []).append((date_str or "", fpath))
-                        collected[mo].append(df)
-
-            self.tables = {}
-            for base, chunks in collected.items():
-                if chunks:
-                    self.tables[self.table_key_name(base)] = pd.concat(chunks, ignore_index=True)
+                self.collect_from_dir(entry.path, prepost, collected)
 
             if not self.pre_folder_found:
                 print(f"[INFO] 'Pre' folder not found under: {input_dir}. Returning to GUI.")
             if not self.post_folder_found:
                 print(f"[INFO] 'Post' folder not found under: {input_dir}. Returning to GUI.")
-            if not self.tables:
+            if not any(collected.values()):
                 print(f"[WARNING] No GU/NR tables were loaded from: {input_dir}.")
-
-            return self.tables
-
         else:
             # ===== Dual-input mode: explicit PRE/POST folders =====
             pre_dir = input_dir_or_pre
@@ -149,56 +270,19 @@ class ConsistencyChecks:
             if not os.path.isdir(post_dir):
                 raise NotADirectoryError(f"Invalid POST directory: {post_dir}")
 
-            collected: Dict[str, List[pd.DataFrame]] = {"GUtranCellRelation": [], "NRCellRelation": []}
             self.pre_folder_found = True
             self.post_folder_found = True
+            self.collect_from_dir(pre_dir, "Pre", collected)
+            self.collect_from_dir(post_dir, "Post", collected)
 
-            def _collect_from(dir_path: str, prepost: str):
-                date_str = extract_date(os.path.basename(dir_path))
-                for fname in os.listdir(dir_path):
-                    lower = fname.lower()
-                    if not (lower.endswith(".log") or lower.endswith(".txt")):
-                        continue
-                    fpath = os.path.join(dir_path, fname)
-                    if not os.path.isfile(fpath):
-                        continue
-
-                    lines = read_text_lines(fpath)
-                    if not lines:
-                        continue
-
-                    headers = find_all_subnetwork_headers(lines)
-                    if not headers:
-                        continue
-                    headers.append(len(lines))
-
-                    for i in range(len(headers) - 1):
-                        h, nxt = headers[i], headers[i + 1]
-                        mo = extract_mo_from_subnetwork_line(lines[h])
-                        if mo not in ("GUtranCellRelation", "NRCellRelation"):
-                            continue
-
-                        df = parse_table_slice_from_subnetwork(lines, h, nxt)
-                        if df is None or df.empty:
-                            continue
-
-                        df = self.insert_front_columns(df, prepost, date_str)
-                        # NEW: store file path only for Summary; do not persist it inside DataFrames
-                        self._source_paths.setdefault(mo, {}).setdefault(prepost, []).append((date_str or "", fpath))
-                        collected[mo].append(df)
-
-            _collect_from(pre_dir, "Pre")
-            _collect_from(post_dir, "Post")
-
-            self.tables = {}
-            for base, chunks in collected.items():
-                if chunks:
-                    self.tables[self.table_key_name(base)] = pd.concat(chunks, ignore_index=True)
-
-            if not self.tables:
+            if not any(collected.values()):
                 print(f"[WARNING] No GU/NR tables were loaded from: {pre_dir} and {post_dir}.")
 
-            return self.tables
+        self.tables = {
+            self._table_key_name(base): pd.concat(chunks, ignore_index=True)
+            for base, chunks in collected.items() if chunks
+        }
+        return self.tables
 
     # ----------------------------- LOAD NODES WITHOUT RETUNNING ----------------------------- #
     def load_nodes_without_retune(self, audit_post_excel: Optional[str], module_name: Optional[str] = "") -> set[str]:
@@ -274,12 +358,12 @@ class ConsistencyChecks:
 
     # ----------------------------- COMPARISON ----------------------------- #
     def comparePrePost(
-            self,
-            freq_before: str,
-            freq_after: str,
-            module_name: Optional[str] = "",
-            audit_pre_excel: Optional[str] = None,
-            audit_post_excel: Optional[str] = None,
+        self,
+        freq_before: str,
+        freq_after: str,
+        module_name: Optional[str] = "",
+        audit_pre_excel: Optional[str] = None,
+        audit_post_excel: Optional[str] = None,
     ) -> Dict[str, Dict[str, pd.DataFrame]]:
         """
         Compare Pre/Post relations for GUtranCellRelation and NRCellRelation.
@@ -341,7 +425,7 @@ class ConsistencyChecks:
                 continue
 
             # Pick representative source file for Summary from internal paths (no DF column)
-            def _pick_src(tbl: str, side: str, target_date: str) -> str:
+            def pick_src(tbl: str, side: str, target_date: str) -> str:
                 pool = self._source_paths.get(tbl, {}).get(side, [])
                 # Prefer exact date match (latest set), else first available
                 for d, p in pool:
@@ -351,8 +435,8 @@ class ConsistencyChecks:
 
             pre_date = pre_df_full["Date"].max() if not pre_df_full.empty and "Date" in pre_df_full.columns else ""
             post_date = post_df_full["Date"].max() if not post_df_full.empty and "Date" in post_df_full.columns else ""
-            pre_source_file = _pick_src(table_name, "Pre", pre_date)
-            post_source_file = _pick_src(table_name, "Post", post_date)
+            pre_source_file = pick_src(table_name, "Pre", pre_date)
+            post_source_file = pick_src(table_name, "Post", post_date)
 
             pre_norm = normalize_df(pre_df_full)
             post_norm = normalize_df(post_df_full)
@@ -459,13 +543,19 @@ class ConsistencyChecks:
                     row["Freq_Pre"] = pre_freq_base.get(k, "")
                     row["Freq_Post"] = post_freq_base.get(k, "")
                 else:
-                    row["Freq_Pre"] = pre_slim.get(freq_col, pd.Series("", index=pre_slim.index)).loc[k] if k in pre_slim.index else ""
-                    row["Freq_Post"] = post_slim.get(freq_col, pd.Series("", index=post_slim.index)).loc[k] if k in post_slim.index else ""
+                    row["Freq_Pre"] = (
+                        pre_slim.get(freq_col, pd.Series("", index=pre_slim.index)).loc[k]
+                        if k in pre_slim.index else ""
+                    )
+                    row["Freq_Post"] = (
+                        post_slim.get(freq_col, pd.Series("", index=post_slim.index)).loc[k]
+                        if k in post_slim.index else ""
+                    )
 
                 required_cols = (
                     ["NodeId", "EUtranCellFDDId", "GUtranFreqRelationId", "GUtranCellRelationId"]
-                    if table_name == "GUtranCellRelation" else
-                    ["NodeId", "NRCellCUId", "NRCellRelationId"]
+                    if table_name == "GUtranCellRelation"
+                    else ["NodeId", "NRCellCUId", "NRCellRelationId"]
                 )
                 for rc in required_cols:
                     val = ""
@@ -476,15 +566,28 @@ class ConsistencyChecks:
                     row[rc] = val
 
                 difflist = diff_cols_per_row.get(k, [])
-                row["DiffColumns"] = ", ".join(sorted(difflist))
+
+                # NEW: when there is no parameter difference but the frequency rule
+                #      says this relation is inconsistent (SSB not updated), add
+                #      a descriptive text in DiffColumns.
+                is_freq_only_mismatch = False
+                try:
+                    is_freq_only_mismatch = bool(freq_rule_mask.loc[k]) and not difflist
+                except KeyError:
+                    is_freq_only_mismatch = False
+
+                if is_freq_only_mismatch:
+                    row["DiffColumns"] = "SSB Post-Retuning keeps equal than SSB Pre-Retuning"
+                else:
+                    row["DiffColumns"] = ", ".join(sorted(difflist))
+
                 for c in difflist:
                     row[f"{c}_Pre"] = pre_common.loc[k, c]
                     row[f"{c}_Post"] = post_common.loc[k, c]
 
                 rows.append(row)
 
-            discrepancies = pd.DataFrame(rows)
-            discrepancies = reorder_cols(discrepancies, table_name)
+            discrepancies = reorder_cols(pd.DataFrame(rows), table_name)
 
             if not new_in_post.empty:
                 for col in new_in_post.columns:
@@ -493,59 +596,64 @@ class ConsistencyChecks:
                 for col in missing_in_post.columns:
                     missing_in_post[col] = missing_in_post[col].astype(str)
 
-            # --- minimal replacement for new/missing frequency pairing ---
+            # --- light construction for new/missing tables (only keys + Freq_Pre/Freq_Post) ---
             def with_freq_pair(df_src: pd.DataFrame, tbl: str, kind: str) -> pd.DataFrame:
                 """
-                Build a light table for pair counting:
-                  - Compute base frequency from freq_col
-                  - For 'new': set Freq_Pre="" and Freq_Post=base
-                  - For 'missing': set Freq_Pre=base and Freq_Post=""
-                  - Drop only meta columns ('Pre/Post', 'Date'); keep freq_col if present
+                Build a light table for _new / _missing:
+                  - Use only key columns (plus NodeId if present).
+                  - Compute base frequency from freq_col.
+                  - For 'new':   Freq_Pre = ""        , Freq_Post = base
+                  - For 'missing': Freq_Pre = base    , Freq_Post = ""
+                  - Do not drag all relation columns; keep them only in all_relations.
                 """
                 if df_src is None or df_src.empty:
                     return df_src
 
-                df_tmp = df_src.copy()
+                df_src = df_src.copy()
+                for col in df_src.columns:
+                    df_src[col] = df_src[col].astype(str)
 
-                # Ensure string dtype for safe operations
-                for col in df_tmp.columns:
-                    df_tmp[col] = df_tmp[col].astype(str)
-
-                # Compute base frequency using the proper extractor
+                # Base frequency from main freq_col
                 if tbl == "NRCellRelation":
-                    base = extract_nr_freq_base(df_tmp.get(freq_col, pd.Series("", index=df_tmp.index)))
+                    base = extract_nr_freq_base(df_src.get(freq_col, pd.Series("", index=df_src.index)))
                 else:
-                    base = extract_gu_freq_base(df_tmp.get(freq_col, pd.Series("", index=df_tmp.index)))
+                    base = extract_gu_freq_base(df_src.get(freq_col, pd.Series("", index=df_src.index)))
 
-                # Assign Freq_Pre/Freq_Post according to kind
+                # Keep only key columns (and NodeId if not already included)
+                keep_cols: List[str] = []
+                if "NodeId" in df_src.columns:
+                    keep_cols.append("NodeId")
+                for c in key_cols:
+                    if c in df_src.columns and c not in keep_cols:
+                        keep_cols.append(c)
+
+                df_tmp = df_src[keep_cols].copy()
+
                 if kind == "new":
-                    # New in Post: Pre side must be empty, Post side carries the base
                     df_tmp["Freq_Pre"] = ""
                     df_tmp["Freq_Post"] = base
                 elif kind == "missing":
-                    # Missing in Post: Pre side carries the base, Post side must be empty
                     df_tmp["Freq_Pre"] = base
                     df_tmp["Freq_Post"] = ""
                 else:
-                    # Fallback (should not happen)
                     df_tmp["Freq_Pre"] = ""
                     df_tmp["Freq_Post"] = ""
 
-                # Drop only meta columns; keep freq_col for reference (harmless)
-                df_tmp = df_tmp.drop(columns=[c for c in ["Pre/Post", "Date"] if c in df_tmp.columns], errors="ignore")
                 return df_tmp
 
-            # Build cleaned tables for pair counting
             new_in_post_clean = with_freq_pair(new_in_post, table_name, kind="new")
             missing_in_post_clean = with_freq_pair(missing_in_post, table_name, kind="missing")
 
             # Pair stats
-            pair_stats = pd.DataFrame({
-                "Freq_Pre": pre_freq_base.reindex(pre_common.index).fillna("").replace("", "<empty>"),
-                "Freq_Post": post_freq_base.reindex(pre_common.index).fillna("").replace("", "<empty>"),
-                "ParamDiff": any_diff_mask.reindex(pre_common.index).astype(bool),
-                "FreqDiff": freq_rule_mask.reindex(pre_common.index).astype(bool),
-            }, index=pre_common.index)
+            pair_stats = pd.DataFrame(
+                {
+                    "Freq_Pre": pre_freq_base.reindex(pre_common.index).fillna("").replace("", "<empty>"),
+                    "Freq_Post": post_freq_base.reindex(pre_common.index).fillna("").replace("", "<empty>"),
+                    "ParamDiff": any_diff_mask.reindex(pre_common.index).astype(bool),
+                    "FreqDiff": freq_rule_mask.reindex(pre_common.index).astype(bool),
+                },
+                index=pre_common.index,
+            )
 
             # all_relations (merge último PRE/POST, manteniendo Freq_Pre/Freq_Post)
             pre_latest = pre_norm.copy()
@@ -577,13 +685,28 @@ class ConsistencyChecks:
             for col in set(pre_keep.columns) | set(post_keep.columns):
                 if col in key_cols or col in ("Freq_Pre", "Freq_Post"):
                     continue
+
                 pre_col = f"{col}_PreSide"
                 post_col = f"{col}_PostSide"
-                if post_col in merged_all.columns:
-                    all_relations[col] = merged_all[post_col].where(merged_all[post_col].astype(str) != "",
-                                                                    merged_all[pre_col] if pre_col in merged_all.columns else "")
+
+                if post_col in merged_all.columns and pre_col in merged_all.columns:
+                    # Prefer POST value only if it is not empty/NaN;
+                    # otherwise fall back to PRE value.
+                    post_series = merged_all[post_col]
+                    as_str = post_series.astype(str).str.strip().str.lower()
+                    is_empty = as_str.isin(("", "nan"))  # treat NaN and empty as "no value"
+
+                    all_relations[col] = post_series.where(
+                        ~is_empty,
+                        merged_all[pre_col],
+                    )
+
+                elif post_col in merged_all.columns:
+                    all_relations[col] = merged_all[post_col]
+
                 elif pre_col in merged_all.columns:
                     all_relations[col] = merged_all[pre_col]
+
                 elif col in merged_all.columns:
                     all_relations[col] = merged_all[col]
 
@@ -614,614 +737,12 @@ class ConsistencyChecks:
                 to_skip_relations = rel_series[rel_series.str.contains(pattern_nodes, regex=True, na=False)]
                 if not to_skip_relations.empty:
                     skipped_count = len(to_skip_relations)
-                    print(f"{module_name} - Relations skipped due to destination node being in the no-retuning buffer ({table_name}): {skipped_count} -> {sorted(to_skip_relations.unique())}")
+                    print(
+                        f"{module_name} - Relations skipped due to destination node being in the no-retuning buffer ({table_name}): "
+                        f"{skipped_count} -> {sorted(to_skip_relations.unique())}"
+                    )
 
         return results
-
-    # ----------------------------- HELPERS FOR OUTPUT ----------------------------- #
-    def add_correction_command_gu_new(self, df: pd.DataFrame, relations_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-        """
-        Add 'Correction_Cmd' column for GU_new sheet, using relation table as main data source.
-
-        Format example:
-          del EUtranCellFDD=<EUtranCellFDDId>,GUtranFreqRelation=<GUtranFreqRelationId>,GUtranCellRelation=<GUtranCellRelationId>
-        If any of the required fields is missing/empty, an empty string is used.
-
-        The values used to build the command are taken from the GU_relations table
-        (all_relations) whenever possible, using (EUtranCellFDDId, GUtranCellRelationId)
-        as lookup key. If the relation is not found, the function falls back to the
-        values present in the df row.
-        """
-        if df is None or df.empty:
-            df = df.copy()
-            df["Correction_Cmd"] = ""
-            return df
-
-        df = df.copy()
-
-        # Build lookup dict from relations_df keyed by (EUtranCellFDDId, GUtranCellRelationId)
-        relations_lookup: Dict[tuple, pd.Series] = {}
-        if relations_df is not None and not relations_df.empty:
-            rel = relations_df.copy()
-            for col in ("EUtranCellFDDId", "GUtranCellRelationId"):
-                if col not in rel.columns:
-                    rel[col] = ""
-                rel[col] = rel[col].astype(str).str.strip()
-            for _, r in rel.iterrows():
-                key = (r.get("EUtranCellFDDId", ""), r.get("GUtranCellRelationId", ""))
-                relations_lookup[(str(key[0]), str(key[1]))] = r
-
-        # Ensure key columns exist in df
-        for col in ("NodeId", "EUtranCellFDDId", "GUtranCellRelationId", "GUtranFreqRelationId"):
-            if col not in df.columns:
-                df[col] = ""
-
-        df["NodeId"] = df["NodeId"].astype(str).str.strip()
-        df["EUtranCellFDDId"] = df["EUtranCellFDDId"].astype(str).str.strip()
-        df["GUtranCellRelationId"] = df["GUtranCellRelationId"].astype(str).str.strip()
-
-        def build_command(row: pd.Series) -> str:
-            key = (row.get("EUtranCellFDDId", ""), row.get("GUtranCellRelationId", ""))
-            key = (str(key[0]).strip(), str(key[1]).strip())
-
-            # Prefer the relation row as source of truth
-            rel_row = relations_lookup.get(key)
-            src = rel_row if rel_row is not None else row
-
-            freq_val = str(src.get("GUtranFreqRelationId") or "").strip()
-            eu_cell = str(src.get("EUtranCellFDDId") or "").strip()
-            freq_rel = str(src.get("GUtranFreqRelationId") or "").strip()
-            cell_rel = str(src.get("GUtranCellRelationId") or "").strip()
-
-            if not (freq_val and eu_cell and freq_rel and cell_rel):
-                return ""
-
-            return f"del EUtranCellFDD={eu_cell},GUtranFreqRelation={freq_rel},GUtranCellRelation={cell_rel}"
-
-        df["Correction_Cmd"] = df.apply(build_command, axis=1)
-        return df
-
-    def add_correction_command_nr_new(self, df: pd.DataFrame, relations_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-        """
-        Add 'Correction_Cmd' column for NR_new sheet, using relation table as main data source.
-
-        Format example:
-          del NRCellCU=<NRCellCUId>,NRCellRelation=<NRCellRelationId>
-        If any of the required fields is missing/empty, an empty string is used.
-
-        The values used to build the command are taken from the NR_relations table
-        (all_relations) whenever possible, using (NodeId, NRCellCUId, NRCellRelationId)
-        as lookup key. If the relation is not found, the function falls back to the
-        values present in the df row.
-        """
-        if df is None or df.empty:
-            df = df.copy()
-            df["Correction_Cmd"] = ""
-            # Ensure GNBCUCPFunctionId column exists and is placed before Correction_Cmd
-            if "GNBCUCPFunctionId" not in df.columns:
-                df["GNBCUCPFunctionId"] = ""
-            cols = list(df.columns)
-            if "GNBCUCPFunctionId" in cols and "Correction_Cmd" in cols:
-                cols.remove("GNBCUCPFunctionId")
-                insert_pos = cols.index("Correction_Cmd")
-                cols.insert(insert_pos, "GNBCUCPFunctionId")
-                df = df[cols]
-            return df
-
-        df = df.copy()
-
-        # Build lookup dict from relations_df keyed by (NodeId, NRCellCUId, NRCellRelationId)
-        relations_lookup: Dict[tuple, pd.Series] = {}
-        if relations_df is not None and not relations_df.empty:
-            rel = relations_df.copy()
-            for col in ("NodeId", "NRCellCUId", "NRCellRelationId"):
-                if col not in rel.columns:
-                    rel[col] = ""
-                rel[col] = rel[col].astype(str).str.strip()
-            for _, r in rel.iterrows():
-                key = (r.get("NodeId", ""), r.get("NRCellCUId", ""), r.get("NRCellRelationId", ""))
-                relations_lookup[(str(key[0]), str(key[1]), str(key[2]))] = r
-
-        # Ensure key columns exist in df
-        for col in ("NodeId", "NRCellCUId", "NRCellRelationId"):
-            if col not in df.columns:
-                df[col] = ""
-
-        # Ensure GNBCUCPFunctionId column exists (NR_new will usually have it empty)
-        if "GNBCUCPFunctionId" not in df.columns:
-            df["GNBCUCPFunctionId"] = ""
-
-        df["NodeId"] = df["NodeId"].astype(str).str.strip()
-        df["NRCellCUId"] = df["NRCellCUId"].astype(str).str.strip()
-        df["NRCellRelationId"] = df["NRCellRelationId"].astype(str).str.strip()
-
-        def build_command(row: pd.Series) -> str:
-            key = (row.get("NodeId", ""), row.get("NRCellCUId", ""), row.get("NRCellRelationId", ""))
-            key = (str(key[0]).strip(), str(key[1]).strip(), str(key[2]).strip())
-
-            # Prefer the relation row as source of truth
-            rel_row = relations_lookup.get(key)
-            src = rel_row if rel_row is not None else row
-
-            nr_cell_cu = str(src.get("NRCellCUId") or "").strip()
-            nr_cell_rel = str(src.get("NRCellRelationId") or "").strip()
-
-            if not (nr_cell_cu and nr_cell_rel):
-                return ""
-
-            return f"del NRCellCU={nr_cell_cu},NRCellRelation={nr_cell_rel}"
-
-        df["Correction_Cmd"] = df.apply(build_command, axis=1)
-
-        # Ensure GNBCUCPFunctionId column is placed just before Correction_Cmd
-        if "GNBCUCPFunctionId" in df.columns and "Correction_Cmd" in df.columns:
-            cols = list(df.columns)
-            cols.remove("GNBCUCPFunctionId")
-            insert_pos = cols.index("Correction_Cmd")
-            cols.insert(insert_pos, "GNBCUCPFunctionId")
-            df = df[cols]
-
-        return df
-
-    def add_correction_command_gu_missing(self, df: pd.DataFrame, relations_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-        """
-        Add 'Correction_Cmd' column for GU_missing sheet, building a multiline correction script.
-
-        All placeholders are taken from the relation table whenever possible (GU_relations),
-        using (EUtranCellFDDId, GUtranCellRelationId) as lookup key. If the relation
-        is not found, values from the df row are used as fallback.
-        """
-        if df is None or df.empty:
-            df = df.copy()
-            df["Correction_Cmd"] = ""
-            return df
-
-        df = df.copy()
-
-        # Build lookup dict from relations_df keyed by (EUtranCellFDDId, GUtranCellRelationId)
-        relations_lookup: Dict[tuple, pd.Series] = {}
-        if relations_df is not None and not relations_df.empty:
-            rel = relations_df.copy()
-            for col in ("EUtranCellFDDId", "GUtranCellRelationId"):
-                if col not in rel.columns:
-                    rel[col] = ""
-                rel[col] = rel[col].astype(str).str.strip()
-            for _, r in rel.iterrows():
-                key = (r.get("EUtranCellFDDId", ""), r.get("GUtranCellRelationId", ""))
-                relations_lookup[(str(key[0]), str(key[1]))] = r
-
-        # Ensure key columns exist in df
-        for col in ("NodeId", "ENodeBFunctionId", "EUtranCellFDDId", "GUtranFreqRelationId", "GUtranCellRelationId", "neighborCellRef", "isEndcAllowed", "isHoAllowed", "isRemoveAllowed", "isVoiceHoAllowed", "userLabel", "coverageIndicator"):
-            if col not in df.columns:
-                df[col] = ""
-
-        df["NodeId"] = df["NodeId"].astype(str).str.strip()
-        df["EUtranCellFDDId"] = df["EUtranCellFDDId"].astype(str).str.strip()
-        df["GUtranCellRelationId"] = df["GUtranCellRelationId"].astype(str).str.strip()
-
-        def pick_value(rel_row: Optional[pd.Series], row: pd.Series, field: str) -> str:
-            """
-            Prefer value from relations_df; if empty/NaN, fallback to value in df row.
-            Avoid returning literal 'nan'.
-            """
-            candidates = []
-            if rel_row is not None:
-                candidates.append(rel_row.get(field))
-            candidates.append(row.get(field))
-
-            for v in candidates:
-                if v is None:
-                    continue
-                # Skip real NaN
-                try:
-                    if pd.isna(v):
-                        continue
-                except TypeError:
-                    pass
-                s = str(v).strip()
-                if not s or s.lower() == "nan":
-                    continue
-                return s
-            return ""
-
-        def build_command(row: pd.Series) -> str:
-            key = (row.get("EUtranCellFDDId", ""), row.get("GUtranCellRelationId", ""))
-            key = (str(key[0]).strip(), str(key[1]).strip())
-
-            # Prefer the relation row as source of truth
-            rel_row = relations_lookup.get(key)
-
-            enb_func = pick_value(rel_row, row, "ENodeBFunctionId")
-            eu_cell = pick_value(rel_row, row, "EUtranCellFDDId")
-            freq_rel = pick_value(rel_row, row, "GUtranFreqRelationId")
-            cell_rel = pick_value(rel_row, row, "GUtranCellRelationId")
-            neighbor_ref = pick_value(rel_row, row, "neighborCellRef")
-            is_endc = pick_value(rel_row, row, "isEndcAllowed")
-            is_ho = pick_value(rel_row, row, "isHoAllowed")
-            is_remove = pick_value(rel_row, row, "isRemoveAllowed")
-            is_voice_ho = pick_value(rel_row, row, "isVoiceHoAllowed")
-            user_label = pick_value(rel_row, row, "userLabel")
-            coverage = pick_value(rel_row, row, "coverageIndicator")
-
-            # Overwrite GUtranFreqRelationId to a hardcoded value (new SSB) only when old SSB (648672) is found
-            if self.n77_ssb_pre and freq_rel.startswith(self.n77_ssb_pre):
-                freq_rel = f"{self.n77_ssb_post}-30-20-0-1" if self.n77_ssb_post else freq_rel
-
-            if not user_label:
-                # Safe default label if none is provided in the row
-                user_label = "SSBretune"
-
-            # If core identifiers are missing, do not generate the command
-            if not (enb_func and eu_cell and freq_rel and cell_rel):
-                return ""
-
-            # NEW: keep only GUtraNetwork / ExternalGNodeBFunction / ExternalGUtranCell part
-            clean_neighbor_ref = neighbor_ref
-            if "GUtraNetwork=" in neighbor_ref:
-                pos = neighbor_ref.find("GUtraNetwork=")
-                clean_neighbor_ref = neighbor_ref[pos:]
-
-            parts = [
-                f"crn ENodeBFunction={enb_func},EUtranCellFDD={eu_cell},GUtranFreqRelation={freq_rel},GUtranCellRelation={cell_rel}",
-                f"neighborCellRef {clean_neighbor_ref}" if clean_neighbor_ref else "",
-                f"isEndcAllowed {is_endc}" if is_endc else "",
-                f"isHoAllowed {is_ho}" if is_ho else "",
-                f"isRemoveAllowed {is_remove}" if is_remove else "",
-                f"isVoiceHoAllowed {is_voice_ho}" if is_voice_ho else "",
-                f"userlabel {user_label}",
-                "end",
-                f"set EUtranCellFDD={eu_cell},GUtranFreqRelation={freq_rel},GUtranCellRelation={cell_rel} coverageIndicator {coverage}" if coverage else f"set EUtranCellFDD={eu_cell},GUtranFreqRelation={freq_rel},GUtranCellRelation={cell_rel}"
-            ]
-
-            # Keep non-empty lines only, preserving the line breaks
-            lines = [p for p in parts if p]
-            return "\n".join(lines)
-
-        df["Correction_Cmd"] = df.apply(build_command, axis=1)
-        return df
-
-    def add_correction_command_nr_missing(self, df: pd.DataFrame, relations_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-        """
-        Add 'Correction_Cmd' column for NR_missing sheet, building a multiline correction script.
-
-        All placeholders are taken from the relation table whenever possible (NR_relations),
-        using (NodeId, NRCellCUId, NRCellRelationId) as lookup key. If the relation
-        is not found, values from the df row are used as fallback.
-        """
-        if df is None or df.empty:
-            df = df.copy()
-            df["Correction_Cmd"] = ""
-            # Ensure GNBCUCPFunctionId column exists and is placed before Correction_Cmd
-            if "GNBCUCPFunctionId" not in df.columns:
-                df["GNBCUCPFunctionId"] = ""
-            cols = list(df.columns)
-            if "GNBCUCPFunctionId" in cols and "Correction_Cmd" in cols:
-                cols.remove("GNBCUCPFunctionId")
-                insert_pos = cols.index("Correction_Cmd")
-                cols.insert(insert_pos, "GNBCUCPFunctionId")
-                df = df[cols]
-            return df
-
-        df = df.copy()
-
-        # Build lookup dict from relations_df keyed by (NodeId, NRCellCUId, NRCellRelationId)
-        relations_lookup: Dict[tuple, pd.Series] = {}
-        if relations_df is not None and not relations_df.empty:
-            rel = relations_df.copy()
-            for col in ("NodeId", "NRCellCUId", "NRCellRelationId"):
-                if col not in rel.columns:
-                    rel[col] = ""
-                rel[col] = rel[col].astype(str).str.strip()
-            for _, r in rel.iterrows():
-                key = (r.get("NodeId", ""), r.get("NRCellCUId", ""), r.get("NRCellRelationId", ""))
-                relations_lookup[(str(key[0]), str(key[1]), str(key[2]))] = r
-
-        # Ensure key columns exist in df
-        for col in ("NodeId", "NRCellCUId", "NRCellRelationId", "coverageIndicator", "isHoAllowed", "isRemoveAllowed", "sCellCandidate", "nRCellRef", "nRFreqRelationRef"):
-            if col not in df.columns:
-                df[col] = ""
-
-        # Ensure GNBCUCPFunctionId column exists
-        if "GNBCUCPFunctionId" not in df.columns:
-            df["GNBCUCPFunctionId"] = ""
-
-        df["NodeId"] = df["NodeId"].astype(str).str.strip()
-        df["NRCellCUId"] = df["NRCellCUId"].astype(str).str.strip()
-        df["NRCellRelationId"] = df["NRCellRelationId"].astype(str).str.strip()
-
-        def pick_value(rel_row: Optional[pd.Series], row: pd.Series, field: str) -> str:
-            """
-            Prefer value from relations_df; if empty/NaN, fallback to value in df row.
-            Avoid returning literal 'nan'.
-            """
-            candidates = []
-            if rel_row is not None:
-                candidates.append(rel_row.get(field))
-            candidates.append(row.get(field))
-
-            for v in candidates:
-                if v is None:
-                    continue
-                try:
-                    if pd.isna(v):
-                        continue
-                except TypeError:
-                    pass
-                s = str(v).strip()
-                if not s or s.lower() == "nan":
-                    continue
-                return s
-            return ""
-
-        def extract_gnbcucp_segment(nrcell_ref: str) -> str:
-            """
-            Extract GNBCUCPFunction segment from a full nRCellRef string.
-
-            Example:
-              '...,GNBCUCPFunction=1,NRNetwork=1,ExternalGNBCUCPFunction=auto311_480_3_2509535,ExternalNRCellCU=auto41116222186'
-              -> 'GNBCUCPFunction=1,NRNetwork=1,ExternalGNBCUCPFunction=auto311_480_3_2509535,ExternalNRCellCU=auto41116222186'
-            """
-            if not isinstance(nrcell_ref, str):
-                return ""
-            pos = nrcell_ref.find("GNBCUCPFunction=")
-            if pos == -1:
-                return ""
-            return nrcell_ref[pos:].strip()
-
-        def build_command(row: pd.Series) -> str:
-            key = (row.get("NodeId", ""), row.get("NRCellCUId", ""), row.get("NRCellRelationId", ""))
-            key = (str(key[0]).strip(), str(key[1]).strip(), str(key[2]).strip())
-
-            # Prefer the relation row as source of truth
-            rel_row = relations_lookup.get(key)
-
-            nr_cell_cu = pick_value(rel_row, row, "NRCellCUId")
-            nr_cell_rel = pick_value(rel_row, row, "NRCellRelationId")
-            coverage = pick_value(rel_row, row, "coverageIndicator")
-            is_ho = pick_value(rel_row, row, "isHoAllowed")
-            is_remove = pick_value(rel_row, row, "isRemoveAllowed")
-            s_cell_candidate = pick_value(rel_row, row, "sCellCandidate")
-            nrcell_ref = pick_value(rel_row, row, "nRCellRef")
-            nrfreq_ref = pick_value(rel_row, row, "nRFreqRelationRef")
-
-            # If core identifiers are missing, do not generate the command
-            if not (nr_cell_cu and nr_cell_rel):
-                return ""
-
-            # --------- nRCellRef cleanup: keep everything from GNBCUCPFunction= ---------
-            clean_nrcell_ref = ""
-            if "GNBCUCPFunction=" in nrcell_ref:
-                clean_nrcell_ref = nrcell_ref[nrcell_ref.find("GNBCUCPFunction="):]
-
-            # --------- nRFreqRelationRef cleanup ---------
-            clean_nrfreq_ref = ""
-            if "GNBCUCPFunction=" in nrfreq_ref:
-                sub = nrfreq_ref[nrfreq_ref.find("GNBCUCPFunction="):]
-                gnb_part = sub.split(",", 1)[0]
-                gnb_val = gnb_part.split("=", 1)[1] if "=" in gnb_part else ""
-
-                m_nr_cell = re.search(r"NRCellCU=([^,]+)", sub)
-                m_freq = re.search(r"NRFreqRelation=([^,]+)", sub)
-                nr_cell_for_freq = m_nr_cell.group(1) if m_nr_cell else ""
-                freq_id = m_freq.group(1) if m_freq else ""
-
-                # NEW: replace old SSB (Pre) with Post SSB using class attributes
-                if freq_id == self.n77_ssb_pre:
-                    freq_id = self.n77_ssb_post
-
-                if gnb_val and nr_cell_for_freq and freq_id:
-                    clean_nrfreq_ref = f"GNBCUCPFunction={gnb_val},NRCellCU={nr_cell_for_freq},NRFreqRelation={freq_id}"
-
-            parts = [
-                f"crn NRCellCU={nr_cell_cu},NRCellRelation={nr_cell_rel}",
-                f"nRCellRef {clean_nrcell_ref}" if clean_nrcell_ref else "",
-                f"nRFreqRelationRef {clean_nrfreq_ref}" if clean_nrfreq_ref else "",
-                f"isHoAllowed {is_ho}" if is_ho else "",
-                f"isRemoveAllowed {is_remove}" if is_remove else "",
-                "end",
-                f"set NRCellCU={nr_cell_cu},NRCellRelation={nr_cell_rel} coverageIndicator {coverage}" if coverage else f"set NRCellCU={nr_cell_cu},NRCellRelation={nr_cell_rel}",
-                f"set NRCellCU={nr_cell_cu},NRCellRelation={nr_cell_rel} sCellCandidate {s_cell_candidate}" if s_cell_candidate else ""
-            ]
-
-            lines = [p for p in parts if p]
-            return "\n".join(lines)
-
-        df["Correction_Cmd"] = df.apply(build_command, axis=1)
-
-        # Fill GNBCUCPFunctionId with the segment extracted from nRCellRef
-        if "nRCellRef" in df.columns:
-            df["GNBCUCPFunctionId"] = df["nRCellRef"].astype(str).apply(extract_gnbcucp_segment)
-
-        # Ensure GNBCUCPFunctionId column is placed just before Correction_Cmd
-        if "GNBCUCPFunctionId" in df.columns and "Correction_Cmd" in df.columns:
-            cols = list(df.columns)
-            cols.remove("GNBCUCPFunctionId")
-            insert_pos = cols.index("Correction_Cmd")
-            cols.insert(insert_pos, "GNBCUCPFunctionId")
-            df = df[cols]
-
-        return df
-
-    def add_correction_command_gu_disc(self, disc_df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.DataFrame:
-        """
-        Build delete+create Correction_Cmd blocks for GU_disc rows using GU_new/GU_missing logic.
-
-        For each relation in GU_disc:
-          - First a delete command (same format as GU_new)
-          - Then a create command (same format as GU_missing)
-        """
-        if disc_df is None or disc_df.empty:
-            work = disc_df.copy() if disc_df is not None else pd.DataFrame()
-            work["Correction_Cmd"] = ""
-            return work
-
-        # Ensure NodeId column exists for later grouping/export
-        work = disc_df.copy()
-        if "NodeId" not in work.columns:
-            work["NodeId"] = ""
-
-        # Build delete commands in bulk (as GU_new) using the same disc_df
-        del_df = self.add_correction_command_gu_new(disc_df.copy(), relations_df)
-        # Build create commands in bulk (as GU_missing) using the same disc_df
-        create_df = self.add_correction_command_gu_missing(disc_df.copy(), relations_df)
-
-        # Align indices and ensure string type to avoid NaN issues
-        del_cmds = del_df.get("Correction_Cmd", pd.Series("", index=disc_df.index)).astype(str)
-        create_cmds = create_df.get("Correction_Cmd", pd.Series("", index=disc_df.index)).astype(str)
-
-        def combine_cmds(del_cmd: str, create_cmd: str) -> str:
-            del_cmd = del_cmd.strip()
-            create_cmd = create_cmd.strip()
-            if del_cmd and create_cmd:
-                return f"{del_cmd}\n{create_cmd}"
-            return del_cmd or create_cmd
-
-        work["Correction_Cmd"] = [
-            combine_cmds(d, c) for d, c in zip(del_cmds, create_cmds)
-        ]
-
-        return work
-
-    def add_correction_command_nr_disc(self, disc_df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.DataFrame:
-        """
-        Build delete+create Correction_Cmd blocks for NR_disc rows using NR_new/NR_missing logic.
-
-        For each relation in NR_disc:
-          - First a delete command (same format as NR_new)
-          - Then a create command (same format as NR_missing)
-        """
-        if disc_df is None or disc_df.empty:
-            work = disc_df.copy() if disc_df is not None else pd.DataFrame()
-            work["Correction_Cmd"] = ""
-            # Ensure GNBCUCPFunctionId column exists and is placed before Correction_Cmd
-            if "GNBCUCPFunctionId" not in work.columns:
-                work["GNBCUCPFunctionId"] = ""
-            cols = list(work.columns)
-            if "GNBCUCPFunctionId" in cols and "Correction_Cmd" in cols:
-                cols.remove("GNBCUCPFunctionId")
-                insert_pos = cols.index("Correction_Cmd")
-                cols.insert(insert_pos, "GNBCUCPFunctionId")
-                work = work[cols]
-            return work
-
-        # Ensure NodeId column exists for later grouping/export
-        work = disc_df.copy()
-        if "NodeId" not in work.columns:
-            work["NodeId"] = ""
-
-        # Ensure GNBCUCPFunctionId column exists
-        if "GNBCUCPFunctionId" not in work.columns:
-            work["GNBCUCPFunctionId"] = ""
-
-        def extract_gnbcucp_segment(nrcell_ref: str) -> str:
-            """
-            Extract GNBCUCPFunction segment from a full nRCellRef string.
-            """
-            if not isinstance(nrcell_ref, str):
-                return ""
-            pos = nrcell_ref.find("GNBCUCPFunction=")
-            if pos == -1:
-                return ""
-            return nrcell_ref[pos:].strip()
-
-        # Populate GNBCUCPFunctionId from nRCellRef if available
-        if "nRCellRef" in work.columns:
-            work["GNBCUCPFunctionId"] = work["nRCellRef"].astype(str).apply(extract_gnbcucp_segment)
-
-        # Build delete commands in bulk (as NR_new) using the same disc_df
-        del_df = self.add_correction_command_nr_new(disc_df.copy(), relations_df)
-        # Build create commands in bulk (as NR_missing) using the same disc_df
-        create_df = self.add_correction_command_nr_missing(disc_df.copy(), relations_df)
-
-        # Align indices and ensure string type to avoid NaN issues
-        del_cmds = del_df.get("Correction_Cmd", pd.Series("", index=disc_df.index)).astype(str)
-        create_cmds = create_df.get("Correction_Cmd", pd.Series("", index=disc_df.index)).astype(str)
-
-        def combine_cmds(del_cmd: str, create_cmd: str) -> str:
-            del_cmd = del_cmd.strip()
-            create_cmd = create_cmd.strip()
-            if del_cmd and create_cmd:
-                return f"{del_cmd}\n{create_cmd}"
-            return del_cmd or create_cmd
-
-        work["Correction_Cmd"] = [
-            combine_cmds(d, c) for d, c in zip(del_cmds, create_cmds)
-        ]
-
-        # Ensure GNBCUCPFunctionId column is placed just before Correction_Cmd
-        if "GNBCUCPFunctionId" in work.columns and "Correction_Cmd" in work.columns:
-            cols = list(work.columns)
-            cols.remove("GNBCUCPFunctionId")
-            insert_pos = cols.index("Correction_Cmd")
-            cols.insert(insert_pos, "GNBCUCPFunctionId")
-            work = work[cols]
-
-        return work
-
-    # ----------------------------- CORRECTION COMMNADS TO TXT ----------------------------- #
-    def export_correction_cmd_texts(self, output_dir: str, dfs_by_category: Dict[str, pd.DataFrame]) -> int:
-        """
-        Export Correction_Cmd values to text files grouped by NodeId and category.
-
-        For each category (e.g. GU_missing, NR_new), one file per NodeId is created in:
-          <output_dir>/Correction_Cmd/<NodeId>_<Category>.txt
-
-        Each file contains all non-empty Correction_Cmd blocks for that NodeId and category,
-        separated by a blank line.
-        """
-        base_dir = os.path.join(output_dir, "Correction_Cmd")
-        os.makedirs(base_dir, exist_ok=True)
-
-        # NEW: subfolders
-        new_dir = os.path.join(base_dir, "New Relations")
-        missing_dir = os.path.join(base_dir, "Missing Relations")
-        discrepancies_dir = os.path.join(base_dir, "Discrepancies")
-        os.makedirs(new_dir, exist_ok=True)
-        os.makedirs(missing_dir, exist_ok=True)
-        os.makedirs(discrepancies_dir, exist_ok=True)
-
-        total_files = 0  # Counter for generated command files
-
-        for category, df in dfs_by_category.items():
-            if df is None or df.empty:
-                continue
-            if "NodeId" not in df.columns or "Correction_Cmd" not in df.columns:
-                continue
-
-            # Ensure string types to avoid issues when grouping/writing
-            work = df.copy()
-            work["NodeId"] = work["NodeId"].astype(str).str.strip()
-            work["Correction_Cmd"] = work["Correction_Cmd"].astype(str)
-
-            for node_id, group in work.groupby("NodeId"):
-                node_str = str(node_id).strip()
-                if not node_str:
-                    continue
-
-                cmds = [cmd for cmd in group["Correction_Cmd"] if cmd.strip()]
-                if not cmds:
-                    continue
-
-                # NEW: choose destination folder
-                if "new" in category.lower():
-                    target_dir = new_dir
-                elif "missing" in category.lower():
-                    target_dir = missing_dir
-                elif "disc" in category.lower():
-                    target_dir = discrepancies_dir
-                else:
-                    target_dir = base_dir
-
-                file_name = f"{node_str}_{category}.txt"
-                file_path = os.path.join(target_dir, file_name)
-                file_path_long = to_long_path(file_path)
-
-                with open(file_path_long, "w", encoding="utf-8") as f:
-                    f.write("\n\n".join(cmds))
-
-                total_files += 1
-
-        return total_files
 
     # ----------------------------- SUMMARY AUDIT COMPARISSON ----------------------------- #
     def build_summaryaudit_comparison(self) -> Optional[pd.DataFrame]:
@@ -1466,30 +987,27 @@ class ConsistencyChecks:
                 gu_disc_df = enforce_gu_columns(b.get("discrepancies"))
                 gu_missing_df = enforce_gu_columns(b.get("missing_in_post"))
                 gu_new_df = enforce_gu_columns(b.get("new_in_post"))
-                # NEW: add correction commands (using GU_relations as data source)
-                gu_new_df = self.add_correction_command_gu_new(gu_new_df, gu_rel_df)
-                gu_missing_df = self.add_correction_command_gu_missing(gu_missing_df, gu_rel_df)
-                # NEW: build delete+create commands for discrepancies
-                gu_disc_cmd_df = self.add_correction_command_gu_disc(gu_disc_df, gu_rel_df)
 
-                # NEW: register GU dataframes with Correction_Cmd for text export
+                # Build correction commands using external helpers (relations as main source)
+                gu_new_df = build_gu_new(gu_new_df, gu_rel_df)
+                gu_missing_df = build_gu_missing(gu_missing_df, gu_rel_df, self.n77_ssb_pre, self.n77_ssb_post)
+                gu_disc_cmd_df = build_gu_disc(gu_disc_df, gu_rel_df, self.n77_ssb_pre, self.n77_ssb_post)
+
                 correction_cmd_sources["GU_missing"] = gu_missing_df
                 correction_cmd_sources["GU_new"] = gu_new_df
                 correction_cmd_sources["GU_disc"] = gu_disc_cmd_df
 
+                gu_rel_df.to_excel(writer, sheet_name="GU_relations", index=False)
                 gu_disc_cmd_df.to_excel(writer, sheet_name="GU_disc", index=False)
-
                 gu_missing_df.to_excel(writer, sheet_name="GU_missing", index=False)
                 gu_new_df.to_excel(writer, sheet_name="GU_new", index=False)
-                gu_rel_df.to_excel(writer, sheet_name="GU_relations", index=False)
-
             else:
+                pd.DataFrame().to_excel(writer, sheet_name="GU_relations", index=False)
                 enforce_gu_columns(pd.DataFrame()).to_excel(writer, sheet_name="GU_disc", index=False)
-                empty_gu_missing_df = self.add_correction_command_gu_missing(enforce_gu_columns(pd.DataFrame()))
-                empty_gu_new_df = self.add_correction_command_gu_new(enforce_gu_columns(pd.DataFrame()))
+                empty_gu_missing_df = build_gu_missing(enforce_gu_columns(pd.DataFrame()), None, self.n77_ssb_pre, self.n77_ssb_post)
+                empty_gu_new_df = build_gu_new(enforce_gu_columns(pd.DataFrame()), None)
                 empty_gu_missing_df.to_excel(writer, sheet_name="GU_missing", index=False)
                 empty_gu_new_df.to_excel(writer, sheet_name="GU_new", index=False)
-                pd.DataFrame().to_excel(writer, sheet_name="GU_relations", index=False)
 
             # NR sheets
             if results and "NRCellRelation" in results:
@@ -1498,34 +1016,31 @@ class ConsistencyChecks:
                 nr_disc_df = enforce_nr_columns(b.get("discrepancies"))
                 nr_missing_df = enforce_nr_columns(b.get("missing_in_post"))
                 nr_new_df = enforce_nr_columns(b.get("new_in_post"))
-                # NEW: add correction commands (using NR_relations as data source)
-                nr_new_df = self.add_correction_command_nr_new(nr_new_df, nr_rel_df)
-                nr_missing_df = self.add_correction_command_nr_missing(nr_missing_df, nr_rel_df)
-                # NEW: build delete+create commands for discrepancies
-                nr_disc_cmd_df = self.add_correction_command_nr_disc(nr_disc_df, nr_rel_df)
-                # NEW: register NR dataframes with Correction_Cmd for text export
+
+                nr_new_df = build_nr_new(nr_new_df, nr_rel_df)
+                nr_missing_df = build_nr_missing(nr_missing_df, nr_rel_df, self.n77_ssb_pre, self.n77_ssb_post)
+                nr_disc_cmd_df = build_nr_disc(nr_disc_df, nr_rel_df, self.n77_ssb_pre, self.n77_ssb_post)
+
                 correction_cmd_sources["NR_missing"] = nr_missing_df
                 correction_cmd_sources["NR_new"] = nr_new_df
                 correction_cmd_sources["NR_disc"] = nr_disc_cmd_df
 
+                nr_rel_df.to_excel(writer, sheet_name="NR_relations", index=False)
                 nr_disc_cmd_df.to_excel(writer, sheet_name="NR_disc", index=False)
-
                 nr_missing_df.to_excel(writer, sheet_name="NR_missing", index=False)
                 nr_new_df.to_excel(writer, sheet_name="NR_new", index=False)
-                nr_rel_df.to_excel(writer, sheet_name="NR_relations", index=False)
-
             else:
+                pd.DataFrame().to_excel(writer, sheet_name="NR_relations", index=False)
                 enforce_nr_columns(pd.DataFrame()).to_excel(writer, sheet_name="NR_disc", index=False)
-                empty_nr_missing_df = self.add_correction_command_nr_missing(enforce_nr_columns(pd.DataFrame()))
-                empty_nr_new_df = self.add_correction_command_nr_new(enforce_nr_columns(pd.DataFrame()))
+                empty_nr_missing_df = build_nr_missing(enforce_nr_columns(pd.DataFrame()), None, self.n77_ssb_pre, self.n77_ssb_post)
+                empty_nr_new_df = build_nr_new(enforce_nr_columns(pd.DataFrame()), None)
                 empty_nr_missing_df.to_excel(writer, sheet_name="NR_missing", index=False)
                 empty_nr_new_df.to_excel(writer, sheet_name="NR_new", index=False)
-                pd.DataFrame().to_excel(writer, sheet_name="NR_relations", index=False)
 
-            # NEW: export all Correction_Cmd blocks to per-node text files
+            # Export text files (outside GU/NR blocks, como ya tenías)
             if correction_cmd_sources:
-                cmd_files = self.export_correction_cmd_texts(output_dir, correction_cmd_sources)
-                print(f"\n[Consistency Checks (Pre/Post Comparison)] Generated {cmd_files} Correction_Cmd text files in: '{pretty_path(os.path.join(output_dir, 'Correction_Cmd'))}'")
+                cmd_files = export_correction_cmd_texts(output_dir, correction_cmd_sources)
+
 
             # -------------------------------------------------------------------
             #  APPLY HEADER STYLING + AUTO-FIT COLUMNS FOR ALL SHEETS
