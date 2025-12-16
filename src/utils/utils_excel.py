@@ -184,7 +184,7 @@ def enable_header_filters(writer, freeze_header: bool = True, align_left: bool =
         pass
 
 
-def style_headers_autofilter_and_autofit(writer, freeze_header: bool = True, align: str = "left", header_color: str = "CCE5FF") -> None:
+def style_headers_autofilter_and_autofit(writer, freeze_header: bool = True, align: str = "left", header_color: str = "CCE5FF", max_width: int = 100) -> None:
     """
     Apply header styling (with configurable color), enable auto-filter on the first row,
     freeze header optionally, and auto-fit all column widths.
@@ -194,6 +194,7 @@ def style_headers_autofilter_and_autofit(writer, freeze_header: bool = True, ali
         freeze_header: whether to freeze the first row (default=True)
         align: horizontal alignment for header text ("left", "center", "right")
         header_color: fill color for header row (hex string, default="CCE5FF")
+        max_width: maximum allowed column width when auto-fitting (default=100)
     """
     workbook = writer.book
 
@@ -205,17 +206,9 @@ def style_headers_autofilter_and_autofit(writer, freeze_header: bool = True, ali
         # --------------------------------------------------------------
         # 1) Apply header style
         # --------------------------------------------------------------
-        header_fill = PatternFill(
-            start_color=header_color,
-            end_color=header_color,
-            fill_type="solid"
-        )
+        header_fill = PatternFill(start_color=header_color, end_color=header_color, fill_type="solid")
 
-        header_alignment = Alignment(
-            horizontal=align,
-            vertical="center",
-            wrap_text=True
-        )
+        header_alignment = Alignment(horizontal=align, vertical="center", wrap_text=True)
 
         for cell in ws[1]:
             cell.fill = header_fill
@@ -236,20 +229,31 @@ def style_headers_autofilter_and_autofit(writer, freeze_header: bool = True, ali
             ws.freeze_panes = "A2"
 
         # --------------------------------------------------------------
-        # 4) Auto-fit column widths
+        # 4) Auto-fit column widths (max between header and content, capped by max_width)
         # --------------------------------------------------------------
         for col_idx in range(1, ws.max_column + 1):
             col_letter = get_column_letter(col_idx)
-            max_length = 0
 
-            for cell in ws[col_letter]:
+            header_cell = ws.cell(row=1, column=col_idx)
+            header_value = str(header_cell.value) if header_cell.value is not None else ""
+            header_value = header_value.replace("\r\n", " ").replace("\n", " ").strip()
+            header_length = len(header_value)
+
+            max_content_length = 0
+            found_non_empty = False
+
+            # Start from row 2 so that "content" does not double-count the header
+            for row_idx in range(2, ws.max_row + 1):
+                cell = ws.cell(row=row_idx, column=col_idx)
                 try:
-                    value = str(cell.value) if cell.value is not None else ""
-                    value = value.replace("\r\n", " ").replace("\n", " ")
-                    max_length = max(max_length, len(value))
+                    value = "" if cell.value is None else str(cell.value)
+                    value = value.replace("\r\n", " ").replace("\n", " ").strip()
+                    if value != "":
+                        found_non_empty = True
+                        max_content_length = max(max_content_length, len(value))
                 except Exception:
                     pass
 
-            ws.column_dimensions[col_letter].width = max_length + 2
-
+            max_length = max(header_length, max_content_length) if found_non_empty else header_length
+            ws.column_dimensions[col_letter].width = min(max_length + 2, max_width)
 
