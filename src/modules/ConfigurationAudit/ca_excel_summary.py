@@ -1087,13 +1087,13 @@ def build_summary_audit(
                     add_row(
                         "ExternalNRCellCU",
                         "NR Frequency Audit",
-                        f"ExternalNRCellCU to old N77 SSB ({old_ssb}) (from ExternalNRCellCU)",
+                        f"External cells to old N77 SSB ({old_ssb}) (from ExternalNRCellCU)",
                         count_old,
                     )
                     add_row(
                         "ExternalNRCellCU",
                         "NR Frequency Audit",
-                        f"ExternalNRCellCU to new N77 SSB ({new_ssb}) (from ExternalNRCellCU)",
+                        f"External cells to new N77 SSB ({new_ssb}) (from ExternalNRCellCU)",
                         count_new,
                     )
                 else:
@@ -1556,7 +1556,7 @@ def build_summary_audit(
                 f"ERROR: {ex}",
             )
 
-    # ----------------------------- NEW: ExternalGUtranCell (old/new counts + OUT_OF_SERVICE node counts) -----------------------------
+    # ----------------------------- NEW: ExternalGUtranCell (old/new counts + OUT_OF_SERVICE row counts) -----------------------------
     def process_external_gutran_cell():
         try:
             if df_external_gutran_cell is not None and not df_external_gutran_cell.empty:
@@ -1565,7 +1565,9 @@ def build_summary_audit(
                 status_col = resolve_column_case_insensitive(df_external_gutran_cell, ["serviceStatus", "ServiceStatus"])
 
                 if node_col and ref_col:
-                    work = df_external_gutran_cell[[node_col, ref_col] + ([status_col] if status_col else [])].copy()
+                    cols = [node_col, ref_col] + ([status_col] if status_col else [])
+                    work = df_external_gutran_cell[cols].copy()
+
                     work[node_col] = work[node_col].astype(str).str.strip()
                     work["_ssb_int_"] = work[ref_col].map(_extract_ssb_from_gutran_sync_ref)
 
@@ -1579,44 +1581,44 @@ def build_summary_audit(
                     add_row(
                         "ExternalGUtranCell",
                         "LTE Frequency Audit",
-                        f"ExternalGUtranCell to old N77 SSB ({old_ssb}) (from ExternalGUtranCell)",
+                        f"External cells to old N77 SSB ({old_ssb}) (from ExternalGUtranCell)",
                         count_old,
                     )
                     add_row(
                         "ExternalGUtranCell",
                         "LTE Frequency Audit",
-                        f"ExternalGUtranCell to new N77 SSB ({new_ssb}) (from ExternalGUtranCell)",
+                        f"External cells to new N77 SSB ({new_ssb}) (from ExternalGUtranCell)",
                         count_new,
                     )
 
-                    # OUT_OF_SERVICE node counts based on serviceStatus and parsed SSB from gUtranSyncSignalFrequencyRef
+                    # OUT_OF_SERVICE ROW counts based on serviceStatus and parsed SSB from gUtranSyncSignalFrequencyRef
                     if status_col:
                         work["_status_norm_"] = work[status_col].map(_normalize_state)
                         mask_oos = work["_status_norm_"] == "OUT_OF_SERVICE"
 
-                        # Number of nodes pointing to old/new SSB AND being OUT_OF_SERVICE
-                        nodes_old_oos = sorted(work.loc[(work["_ssb_int_"] == old_ssb) & mask_oos, node_col].astype(str).unique())
-                        nodes_new_oos = sorted(work.loc[(work["_ssb_int_"] == new_ssb) & mask_oos, node_col].astype(str).unique())
+                        # Count ROWS (not nodes) and don't dump lists in ExtraInfo
+                        count_old_oos = int(((work["_ssb_int_"] == old_ssb) & mask_oos).sum())
+                        count_new_oos = int(((work["_ssb_int_"] == new_ssb) & mask_oos).sum())
 
                         add_row(
                             "ExternalGUtranCell",
                             "LTE Frequency Audit",
-                            f"ExternalGUtranCell to old N77 SSB ({old_ssb}) serviceStatus OUT_OF_SERVICE (from ExternalGUtranCell)",
-                            len(nodes_old_oos),
-                            ", ".join(nodes_old_oos),
+                            f"External cells to old N77 SSB ({old_ssb}) serviceStatus OUT_OF_SERVICE (from ExternalGUtranCell)",
+                            count_old_oos,
+                            "",  # keep ExtraInfo empty to avoid huge lists
                         )
                         add_row(
                             "ExternalGUtranCell",
                             "LTE Frequency Audit",
-                            f"ExternalGUtranCell to new N77 SSB ({new_ssb}) serviceStatus OUT_OF_SERVICE (from ExternalGUtranCell)",
-                            len(nodes_new_oos),
-                            ", ".join(nodes_new_oos),
+                            f"External cells to new N77 SSB ({new_ssb}) serviceStatus OUT_OF_SERVICE (from ExternalGUtranCell)",
+                            count_new_oos,
+                            "",  # keep ExtraInfo empty to avoid huge lists
                         )
                     else:
                         add_row(
                             "ExternalGUtranCell",
                             "LTE Frequency Audit",
-                            "ExternalGUtranCell OUT_OF_SERVICE checks skipped (serviceStatus missing)",
+                            "External cells OUT_OF_SERVICE checks skipped (serviceStatus missing)",
                             "N/A",
                         )
                 else:

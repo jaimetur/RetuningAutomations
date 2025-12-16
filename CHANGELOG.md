@@ -33,12 +33,14 @@
         - NR to LTE TermPoints with operationalState=DISABLED (from TermPointToENodeB)
 
   - #### 🚀 Enhancements:
+    - Excel columns Autofit now is limited to a maximum column width of 100.
   
   - #### 🐛 Bug fixes:
     - Minor bug fixing.
     
   - #### 📚 Documentation: 
     - Updated documentation with latest changes.
+
 ---
 
 ## Release: v0.3.11
