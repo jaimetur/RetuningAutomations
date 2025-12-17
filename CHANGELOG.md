@@ -4,6 +4,27 @@
 
 ---
 
+## Release: v0.4.1
+- ### Release Date: 2025-12-18
+
+- ### Main Changes:
+  
+  - #### 🚨 Breaking Changes:
+  
+  - #### 🌟 New Features:
+
+  - #### 🚀 Enhancements:
+  
+  - #### 🐛 Bug fixes:
+    - Fixed `ERROR: 'str' object has no attribute 'astype'` on `ConfigurationAudit` module when `availabilityStatus` column is not found.
+    - Fixed Error when any MO has the same name as the expected table but with some letter in upper/lower capital.
+    - Minor bug fixing.
+    
+  - #### 📚 Documentation: 
+    - Updated documentation with latest changes.
+
+---
+
 ## Release: v0.4.0
 - ### Release Date: 2025-12-16
 
