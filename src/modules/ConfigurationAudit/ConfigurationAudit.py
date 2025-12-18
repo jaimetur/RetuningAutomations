@@ -11,7 +11,7 @@ from src.utils.utils_excel import sanitize_sheet_name, unique_sheet_name, color_
 from src.utils.utils_sorting import natural_logfile_key
 from src.utils.utils_pivot import safe_pivot_count, safe_crosstab_count, apply_frequency_column_filter
 from src.utils.utils_dataframe import concat_or_empty
-from .ca_summary import build_summary_audit
+from .ca_summary_excel import build_summary_audit
 from .ca_summary_ppt import generate_ppt_summary
 
 

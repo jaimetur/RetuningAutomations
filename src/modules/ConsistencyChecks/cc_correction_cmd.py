@@ -12,9 +12,8 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Dict, Optional
-
 import pandas as pd
+from typing import Dict, Optional
 
 from src.utils.utils_dataframe import ensure_column_after, build_row_lookup, pick_non_empty_value
 from src.utils.utils_io import to_long_path, pretty_path
