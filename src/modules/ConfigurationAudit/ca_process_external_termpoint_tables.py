@@ -18,12 +18,12 @@ def process_external_nr_cell_cu(df_external_nr_cell_cu, rows, module_name, n77_s
         nr_tail = str(nr_tail).replace(str(n77_ssb_pre), str(n77_ssb_post))
 
         return (
-            "confb+\n"
-            "gs+\n"
-            "lt all\n"
-            "alt\n"
+            # "confb+\n"
+            # "gs+\n"
+            # "lt all\n"
+            # "alt\n"
             f"set ExternalGNBCUCPFunction={ext_gnb},ExternalNRCellCU={ext_cell} nRFrequencyRef {nr_tail}\n"
-            "alt"
+            # "alt"
         )
 
     def _normalize_state_local(value: object) -> str:
@@ -131,9 +131,17 @@ def process_external_nr_cell_cu(df_external_nr_cell_cu, rows, module_name, n77_s
                                 ", availabilityStatus=" + avail_txt
                         )
 
-                        admin_ok = admin_val.map(_normalize_state_local) == "UNLOCKED"
-                        oper_ok = oper_val.map(_normalize_state_local) == "ENABLED"
-                        avail_ok = avail_val.astype(str).fillna("").str.strip() == ""
+                        # CHANGE: Missing/blank states must NOT force NOT_OK
+                        # - admin OK if blank OR UNLOCKED
+                        # - oper OK if blank OR ENABLED
+                        # - avail OK if blank (same logic as before)
+                        admin_norm = admin_val.map(_normalize_state_local)
+                        oper_norm = oper_val.map(_normalize_state_local)
+                        avail_raw = avail_val.astype(str).fillna("").str.strip()
+
+                        admin_ok = (admin_norm == "") | (admin_norm == "UNLOCKED")
+                        oper_ok = (oper_norm == "") | (oper_norm == "ENABLED")
+                        avail_ok = avail_raw == ""
 
                         tp_src["TermpointConsolidatedStatus"] = (
                             (admin_ok & oper_ok & avail_ok)
@@ -151,7 +159,7 @@ def process_external_nr_cell_cu(df_external_nr_cell_cu, rows, module_name, n77_s
                 work = ensure_column_after(work, "GNodeB_SSB_Source", "TermpointConsolidatedStatus")
 
                 # =========================
-                # GNodeB_SSB_Target
+                # Frequency  (was: GNodeB_SSB_Target)
                 # =========================
                 if ext_gnb_col:
                     def _detect_gnodeb_target(ext_gnb: object) -> str:
@@ -160,9 +168,9 @@ def process_external_nr_cell_cu(df_external_nr_cell_cu, rows, module_name, n77_s
                             return "SSB-Pre"
                         if any(n in val for n in nodes_with_retune_ids):
                             return "SSB-Post"
-                        return "Other"
+                        return "Unknown"
 
-                    work["GNodeB_SSB_Target"] = work[ext_gnb_col].map(_detect_gnodeb_target)
+                    work["Frequency"] = work[ext_gnb_col].map(_detect_gnodeb_target)
 
                 # =========================
                 # Correction Command
@@ -170,7 +178,7 @@ def process_external_nr_cell_cu(df_external_nr_cell_cu, rows, module_name, n77_s
                 # =========================
                 if ext_gnb_col and cell_col:
                     mask_pre = work["GNodeB_SSB_Source"].astype(str) == old_ssb
-                    mask_target = work["GNodeB_SSB_Target"] != "SSB-Pre"
+                    mask_target = work["Frequency"] != "SSB-Pre"
                     mask_final = mask_pre & mask_target
 
                     # Safely extract NR network tail
@@ -305,45 +313,53 @@ def process_external_gutran_cell(df_external_gutran_cell, _extract_ssb_from_gutr
         # Termpoint / TermpointStatus / ConsolidatedStatus
         # (same logic as ExternalNRCellCU, but LTE side)
         # -------------------------------------------------
-        if df_external_gutran_cell is not None and not df_external_gutran_cell.empty:
-            if node_col and ext_gnb_col:
-                work["Termpoint"] = work[node_col] + "-" + work[ext_gnb_col]
+        if node_col and ext_gnb_col:
+            work["Termpoint"] = work[node_col] + "-" + work[ext_gnb_col]
 
-            if (
-                    df_term_point_to_gnb is not None
-                    and not df_term_point_to_gnb.empty
-                    and "Termpoint" in work.columns
-            ):
-                tp = df_term_point_to_gnb.copy()
+        if (
+                df_term_point_to_gnb is not None
+                and not df_term_point_to_gnb.empty
+                and "Termpoint" in work.columns
+        ):
+            tp = df_term_point_to_gnb.copy()
 
-                tp_node = resolve_column_case_insensitive(tp, ["NodeId"])
-                tp_ext = resolve_column_case_insensitive(tp, ["ExternalGNodeBFunctionId"])
-                admin_col_tp = resolve_column_case_insensitive(tp, ["administrativeState", "AdministrativeState"])
-                oper_col_tp = resolve_column_case_insensitive(tp, ["operationalState", "OperationalState"])
-                avail_col_tp = resolve_column_case_insensitive(tp, ["availabilityStatus", "AvailabilityStatus"])
+            tp_node = resolve_column_case_insensitive(tp, ["NodeId"])
+            tp_ext = resolve_column_case_insensitive(tp, ["ExternalGNodeBFunctionId"])
+            admin_col_tp = resolve_column_case_insensitive(tp, ["administrativeState", "AdministrativeState"])
+            oper_col_tp = resolve_column_case_insensitive(tp, ["operationalState", "OperationalState"])
+            avail_col_tp = resolve_column_case_insensitive(tp, ["availabilityStatus", "AvailabilityStatus"])
 
-                if tp_node and tp_ext:
-                    tp["Termpoint"] = tp[tp_node].astype(str).str.strip() + "-" + tp[tp_ext].astype(str).str.strip()
+            if tp_node and tp_ext:
+                tp["Termpoint"] = tp[tp_node].astype(str).str.strip() + "-" + tp[tp_ext].astype(str).str.strip()
 
-                    admin = tp[admin_col_tp].astype(str).str.upper() if admin_col_tp else ""
-                    oper = tp[oper_col_tp].astype(str).str.upper() if oper_col_tp else ""
-                    avail_raw = tp[avail_col_tp].astype(str).fillna("").str.strip() if avail_col_tp else ""
+                admin_val = tp[admin_col_tp] if admin_col_tp else pd.Series("", index=tp.index)
+                oper_val = tp[oper_col_tp] if oper_col_tp else pd.Series("", index=tp.index)
+                avail_val = tp[avail_col_tp] if avail_col_tp else pd.Series("", index=tp.index)
 
-                    tp["TermpointStatus"] = (
-                            "administrativeState=" + admin +
-                            ", operationalState=" + oper +
-                            ", availabilityStatus=" + avail_raw.replace("", "EMPTY")
-                    )
+                admin = admin_val.astype(str).fillna("").str.upper()
+                oper = oper_val.astype(str).fillna("").str.upper()
+                avail_raw = avail_val.astype(str).fillna("").str.strip()
 
-                    tp["TermpointConsolidatedStatus"] = (
-                        ((admin == "UNLOCKED") & (oper == "ENABLED") & (avail_raw == ""))
-                        .map(lambda v: "OK" if v else "NOT_OK")
-                    )
+                tp["TermpointStatus"] = (
+                        "administrativeState=" + admin +
+                        ", operationalState=" + oper +
+                        ", availabilityStatus=" + avail_raw.replace("", "EMPTY")
+                )
 
-                    tp_map = tp.drop_duplicates("Termpoint").set_index("Termpoint")
+                # CHANGE: Missing/blank states must NOT force NOT_OK
+                admin_ok = (admin == "") | (admin == "UNLOCKED")
+                oper_ok = (oper == "") | (oper == "ENABLED")
+                avail_ok = avail_raw == ""
 
-                    work["TermpointStatus"] = work["Termpoint"].map(tp_map["TermpointStatus"])
-                    work["TermpointConsolidatedStatus"] = work["Termpoint"].map(tp_map["TermpointConsolidatedStatus"])
+                tp["TermpointConsolidatedStatus"] = (
+                    (admin_ok & oper_ok & avail_ok)
+                    .map(lambda v: "OK" if v else "NOT_OK")
+                )
+
+                tp_map = tp.drop_duplicates("Termpoint").set_index("Termpoint")
+
+                work["TermpointStatus"] = work["Termpoint"].map(tp_map["TermpointStatus"])
+                work["TermpointConsolidatedStatus"] = work["Termpoint"].map(tp_map["TermpointConsolidatedStatus"])
 
         # -------------------------------------------------
         # Place GNodeB_SSB_Source right after TermpointConsolidatedStatus
@@ -351,7 +367,7 @@ def process_external_gutran_cell(df_external_gutran_cell, _extract_ssb_from_gutr
         work = ensure_column_after(work, "GNodeB_SSB_Source", "TermpointConsolidatedStatus")
 
         # -------------------------------------------------
-        # GNodeB_SSB_Target
+        # Frequency (was: GNodeB_SSB_Target)
         # -------------------------------------------------
         nodes_pre = set(load_nodes_names_and_id_from_summary_audit(rows, stage="Pre", module_name=module_name) or [])
         nodes_post = set(load_nodes_names_and_id_from_summary_audit(rows, stage="Post", module_name=module_name) or [])
@@ -362,10 +378,10 @@ def process_external_gutran_cell(df_external_gutran_cell, _extract_ssb_from_gutr
                 return "SSB-Pre"
             if any(n in s for n in nodes_post):
                 return "SSB-Post"
-            return "Other"
+            return "Unknown"
 
         if ext_gnb_col:
-            work["GNodeB_SSB_Target"] = work[ext_gnb_col].map(_detect_gnodeb_target_lte)
+            work["Frequency"] = work[ext_gnb_col].map(_detect_gnodeb_target_lte)
 
         # -------------------------------------------------
         # Correction Command (LTE)
@@ -374,7 +390,7 @@ def process_external_gutran_cell(df_external_gutran_cell, _extract_ssb_from_gutr
             work["Correction_Cmd"] = ""
 
         mask_pre = work["GNodeB_SSB_Source"] == n77_ssb_pre
-        mask_target = work["GNodeB_SSB_Target"] != "SSB-Pre"
+        mask_target = work["Frequency"] != "SSB-Pre"
 
         work.loc[mask_pre & mask_target, "Correction_Cmd"] = work.loc[mask_pre & mask_target].apply(
             lambda r:
@@ -391,8 +407,7 @@ def process_external_gutran_cell(df_external_gutran_cell, _extract_ssb_from_gutr
         # -------------------------------------------------
         # Write back preserving original columns + new ones
         # -------------------------------------------------
-        if df_external_gutran_cell is not None and not df_external_gutran_cell.empty:
-            df_external_gutran_cell.loc[:, work.columns] = work
+        df_external_gutran_cell.loc[:, work.columns] = work
 
     except Exception as ex:
         add_row(
@@ -700,14 +715,16 @@ def process_term_point_to_gnb(df_term_point_to_gnb, _normalize_state, _normalize
             "confb+\n"
             "lt all\n"
             "alt\n"
-            f"hget ExternalGNodeBFunction={v},ExternalGUtranCell GUtranSyncSignalFrequency {n77_ssb_post}-30\n"
-            f"hget ExternalGNodeBFunction={v},ExternalGUtranCell GUtranSyncSignalFrequency {n77_ssb_pre}-30\n"
+            f"hget ExternalGNodeBFunction={v},ExternalGUtranCell gUtranSyncSignalFrequencyRef {n77_ssb_post}\n"
+            f"hget ExternalGNodeBFunction={v},ExternalGUtranCell gUtranSyncSignalFrequencyRef {n77_ssb_pre}\n"
             f"get ExternalGNodeBFunction={v},TermpointToGNB\n"
             f"bl ExternalGNodeBFunction={v},TermpointToGNB\n"
             "wait 5\n"
             f"deb ExternalGNodeBFunction={v},TermpointToGNB\n"
             "wait 60\n"
             f"get ExternalGNodeBFunction={v},TermpointToGNB\n"
+            f"hget ExternalGNodeBFunction={v},ExternalGUtranCell gUtranSyncSignalFrequencyRef {n77_ssb_post}\n"
+            f"hget ExternalGNodeBFunction={v},ExternalGUtranCell gUtranSyncSignalFrequencyRef {n77_ssb_pre}\n"
             "alt"
         )
 
