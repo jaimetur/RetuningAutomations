@@ -168,7 +168,7 @@ Running the launcher **without CLI arguments** opens a compact Tkinter dialog wh
 
 **Start (GUI):**
 ```bash
-python RetuningAutomations.py
+python SSB-RetuningAutomations.py
 ```
 
 > The GUI is skipped if Tkinter is not available or `--no-gui` is used.
@@ -304,7 +304,7 @@ Forces CLI-only mode even if arguments are missing.
 ### 1. Configuration Audit
 
 ```bash
-python RetuningAutomations.py \
+python SSB-RetuningAutomations.py \
   --module configuration-audit \
   --input "./AuditInput" \
   --n77-ssb-pre 647328 \
@@ -314,7 +314,7 @@ python RetuningAutomations.py \
 ### 2. Consistency Check (Pre/Post folders)
 
 ```bash
-python RetuningAutomations.py \
+python SSB-RetuningAutomations.py \
   --module consistency-check \
   --input-pre "./Step0" \
   --input-post "./Step3" \
@@ -325,7 +325,7 @@ python RetuningAutomations.py \
 ### 3. Configuration Audit with custom allowed lists
 
 ```bash
-python RetuningAutomations.py \
+python SSB-RetuningAutomations.py \
   --module configuration-audit \
   --input "./audit" \
   --allowed-n77-ssb-pre 648672,649200 \

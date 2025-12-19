@@ -42,7 +42,7 @@ from src.modules.CleanUp.FinalCleanUp import FinalCleanUp
 
 # ================================ VERSIONING ================================ #
 
-TOOL_NAME           = "RetuningAutomations"
+TOOL_NAME           = "SSB-RetuningAutomations"
 TOOL_VERSION        = "0.5.0"
 TOOL_DATE           = "2025-12-19"
 TOOL_NAME_VERSION   = f"{TOOL_NAME}_v{TOOL_VERSION}"
@@ -598,7 +598,9 @@ def run_configuration_audit(
     allowed_n77_arfcn_post_csv: Optional[str] = None,
     versioned_suffix: Optional[str] = None,
     market_label: Optional[str] = None,
-    external_output_dir: Optional[str] = None,  # NEW: force outputs to be written into this folder
+    external_output_dir: Optional[str] = None,
+    profiles_audit: bool = False,                 # <<< NEW
+    module_name_override: Optional[str] = None,    # <<< NEW
 ) -> Optional[str]:
     """
     Run ConfigurationAudit on a folder or recursively on all its subfolders
@@ -617,7 +619,7 @@ def run_configuration_audit(
       starting by 'SubNetwork').
     """
 
-    module_name = "[Configuration Audit]"
+    module_name = module_name_override or "[Configuration Audit]"
 
     if not input_dir:
         print(f"{module_name} [ERROR] No input folder provided.")
@@ -777,7 +779,9 @@ def run_configuration_audit(
             versioned_suffix=versioned_suffix,
             tables_order=TABLES_ORDER,
             output_dir=output_dir,
+            profiles_audit=profiles_audit,  # <<< NEW
         )
+
         if ca_freq_filters_csv:
             kwargs["filter_frequencies"] = [x.strip() for x in ca_freq_filters_csv.split(",") if x.strip()]
 
@@ -1196,23 +1200,38 @@ def run_consistency_checks(
 
     main_logic(market_pairs)
 
-def run_profiles_audit(input_dir: str, *_args) -> None:
+def run_profiles_audit(
+    input_dir: str,
+    ca_freq_filters_csv: str = "",
+    n77_ssb_pre: Optional[str] = None,
+    n77_ssb_post: Optional[str] = None,
+    n77b_ssb: Optional[str] = None,
+    allowed_n77_ssb_pre_csv: Optional[str] = None,
+    allowed_n77_arfcn_pre_csv: Optional[str] = None,
+    allowed_n77_ssb_post_csv: Optional[str] = None,
+    allowed_n77_arfcn_post_csv: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Profiles Audit = Configuration Audit with profiles_audit=True
+    and module_name='[Profiles Audit]'.
+    """
+
     module_name = "[Profiles Audit]"
-    input_dir_fs = to_long_path(input_dir) if input_dir else input_dir
 
-    print(f"{module_name} Running Profiles Audit…")
-    print(f"{module_name} Input folder: '{pretty_path(input_dir_fs)}'")
+    return run_configuration_audit(
+        input_dir=input_dir,
+        ca_freq_filters_csv=ca_freq_filters_csv,
+        n77_ssb_pre=n77_ssb_pre,
+        n77_ssb_post=n77_ssb_post,
+        n77b_ssb=n77b_ssb,
+        allowed_n77_ssb_pre_csv=allowed_n77_ssb_pre_csv,
+        allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
+        allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
+        allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
+        profiles_audit=True,                   # <<< KEY
+        module_name_override=module_name,      # <<< KEY
+    )
 
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    versioned_suffix = f"{timestamp}_v{TOOL_VERSION}"
-
-    app = InitialCleanUp()
-    out = app.run(input_dir_fs, module_name=module_name, versioned_suffix=versioned_suffix)
-
-    if out:
-        print(f"{module_name} Done → '{pretty_path(out)}'")
-    else:
-        print(f"{module_name} Module logic not yet implemented (under development). Exiting...")
 
 
 def run_final_cleanup(input_dir: str, *_args) -> None:
@@ -1310,8 +1329,20 @@ def execute_module(
                 n77b_ssb=n77b_ssb,
             )
 
+
         elif module_fn is run_profiles_audit:
-            module_fn(input_dir, n77_ssb_pre, n77_ssb_post)
+            module_fn(
+                input_dir,
+                ca_freq_filters_csv=ca_freq_filters_csv,
+                n77_ssb_pre=n77_ssb_pre,
+                n77_ssb_post=n77_ssb_post,
+                n77b_ssb=n77b_ssb,
+                allowed_n77_ssb_pre_csv=allowed_n77_ssb_pre_csv,
+                allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
+                allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
+                allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
+            )
+
 
         elif module_fn is run_final_cleanup:
             module_fn(input_dir, n77_ssb_pre, n77_ssb_post)

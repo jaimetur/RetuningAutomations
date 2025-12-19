@@ -10,6 +10,7 @@
 - ### Main Changes:
   
   - #### 🚨 Breaking Changes:
+    - Renamed Tool name from `RetuningAutomations` to `SSB-RetuningAutomations`.
     - Renamed module `4. Initial Clean-Up` to `4. Profiles Audit`.
   
   - #### 🌟 New Features:
