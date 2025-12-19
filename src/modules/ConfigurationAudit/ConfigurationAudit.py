@@ -227,7 +227,8 @@ class ConfigurationAudit:
         # =====================================================================
         #                PHASE 3: Assign unique sheet names
         # =====================================================================
-        used_sheet_names: set = {"Summary"}
+        used_sheet_names: set = {"Summary", "SummaryAudit"}
+
         for entry in table_entries:
             base_name = sanitize_sheet_name(str(entry["sheet_candidate"]))
             final_sheet = unique_sheet_name(base_name, used_sheet_names)
