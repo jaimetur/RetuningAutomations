@@ -15,8 +15,17 @@
 
   - #### 🚀 Enhancements:
     - Optimized TXT Commands file to group all commands within the same nodes and avoid duplicate lines with `confb+, lt all, alt, wait` commands.
+    - Modified TermpointToGNB Correction Command.
+    - Modified TermpointToGnodeB Correction Command.
+    - Modified NR Relations Discrepancies Correction Command.
+    - Correction_Cmd output subfolders have been renamed as follow:
+      - from `Discrepancies` to `RelationsDiscrepancies`
+      - from `New Relations` to `NewRelations`
+      - from `Missing Relations` to `MissingRelations`
+    - Correction_Cmd output subfolders for `RelationsDiscrepancies`, `NewRelations` and `MissingRelations` are now sepparated into two subfolders (`NR` and `GU`) for a better organization.
 
   - #### 🐛 Bug fixes:
+    - Fixed bug on table `Summary GU_FreqRelation` that was taking the data from `GUtranSyncSignalFrequency` table instead of `GUtranFreqRelation`.
     - Minor bug fixing.
     
   - #### 📚 Documentation: 

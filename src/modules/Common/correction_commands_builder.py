@@ -1,4 +1,12 @@
-# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import re
+from typing import Optional
+
+import pandas as pd
+
+from src.utils.utils_dataframe import build_row_lookup, pick_non_empty_value, ensure_column_after
+from src.utils.utils_parsing import extract_gnbcucp_segment, resolve_nrcell_ref
 
 """
 Helpers to build Correction_Cmd columns and export them to text files.
@@ -8,19 +16,6 @@ This module centralizes the logic used by ConsistencyChecks so that:
 - The main ConsistencyChecks module stays smaller and easier to read.
 """
 
-from __future__ import annotations
-
-import os
-import re
-import pandas as pd
-from typing import Dict, Optional
-
-from src.utils.utils_dataframe import ensure_column_after, build_row_lookup, pick_non_empty_value
-from src.utils.utils_io import to_long_path, pretty_path
-from src.utils.utils_parsing import extract_gnbcucp_segment, resolve_nrcell_ref, merge_command_blocks_for_node
-
-
-
 # ----------------------------------------------------------------------
 #  BUILD CORRECTION COMMANDS
 # ----------------------------------------------------------------------
@@ -28,7 +23,7 @@ from src.utils.utils_parsing import extract_gnbcucp_segment, resolve_nrcell_ref,
 # ----------------------------------------------------------------------
 #  GU  -  NEW
 # ----------------------------------------------------------------------
-def build_gu_new(df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.DataFrame:
+def build_correction_command_gu_new_relations(df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.DataFrame:
     """
     Add 'Correction_Cmd' column for GU_new sheet, using relation table as main data source.
 
@@ -77,12 +72,15 @@ def build_gu_new(df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.D
 
         relations_lookup = build_row_lookup(relations_df, ["EUtranCellFDDId", "GUtranCellRelationId"])
 
-        def _from_rel(row: pd.Series, field: str) -> str:
+        def _get_rel_row(row: pd.Series) -> Optional[pd.Series]:
             key = (
                 str(row.get("EUtranCellFDDId", "")).strip(),
                 str(row.get("GUtranCellRelationId", "")).strip(),
             )
-            rel_row = relations_lookup.get(key)
+            return relations_lookup.get(key)
+
+        def _from_rel(row: pd.Series, field: str) -> str:
+            rel_row = _get_rel_row(row)
             return pick_non_empty_value(rel_row, row, field)
 
         # Make sure GUtranFreqRelationId, createdBy and timeOfCreation are taken from relations_df
@@ -90,12 +88,11 @@ def build_gu_new(df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.D
         df["createdBy"] = df.apply(lambda r: _from_rel(r, "createdBy"), axis=1)
         df["timeOfCreation"] = df.apply(lambda r: _from_rel(r, "timeOfCreation"), axis=1)
 
-        def build_command(row: pd.Series) -> str:
-            key = (
-                str(row.get("EUtranCellFDDId", "")).strip(),
-                str(row.get("GUtranCellRelationId", "")).strip(),
-            )
-            rel_row = relations_lookup.get(key)
+        def _build_correction_command(row: pd.Series, rel_row: Optional[pd.Series]) -> str:
+            """
+            Build correction command for GU_new row.
+            Safely returns empty string if mandatory parameters are missing.
+            """
             src = rel_row if rel_row is not None else row
 
             eu_cell = str(src.get("EUtranCellFDDId") or "").strip()
@@ -107,7 +104,7 @@ def build_gu_new(df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.D
 
             return f"del EUtranCellFDD={eu_cell},GUtranFreqRelation={freq_rel},GUtranCellRelation={cell_rel}"
 
-        df["Correction_Cmd"] = df.apply(build_command, axis=1)
+        df["Correction_Cmd"] = df.apply(lambda r: _build_correction_command(r, _get_rel_row(r)), axis=1)
 
     # Final column set: keep only relevant columns and force Correction_Cmd to be last
     desired_cols = [
@@ -129,7 +126,7 @@ def build_gu_new(df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.D
 # ----------------------------------------------------------------------
 #  GU  -  MISSING
 # ----------------------------------------------------------------------
-def build_gu_missing(
+def build_correction_command_gu_missing_relations(
     df: pd.DataFrame,
     relations_df: Optional[pd.DataFrame],
     n77_ssb_pre: Optional[str] = None,
@@ -184,26 +181,26 @@ def build_gu_missing(
 
     relations_lookup = build_row_lookup(relations_df, ["NodeId", "EUtranCellFDDId", "GUtranCellRelationId"])
 
-    def from_rel(row: pd.Series, field: str) -> str:
+    def _get_rel_row(row: pd.Series) -> Optional[pd.Series]:
         key = (
             str(row.get("NodeId", "")).strip(),
             str(row.get("EUtranCellFDDId", "")).strip(),
             str(row.get("GUtranCellRelationId", "")).strip(),
         )
-        rel_row = relations_lookup.get(key)
+        return relations_lookup.get(key)
+
+    def from_rel(row: pd.Series, field: str) -> str:
+        rel_row = _get_rel_row(row)
         return pick_non_empty_value(rel_row, row, field)
 
     # Make sure GUtranFreqRelationId is taken from relations_df
     df["GUtranFreqRelationId"] = df.apply(lambda r: from_rel(r, "GUtranFreqRelationId"), axis=1)
 
-    def build_command(row: pd.Series) -> str:
-        key = (
-            str(row.get("NodeId", "")).strip(),
-            str(row.get("EUtranCellFDDId", "")).strip(),
-            str(row.get("GUtranCellRelationId", "")).strip(),
-        )
-        rel_row = relations_lookup.get(key)
-
+    def _build_correction_command(row: pd.Series, rel_row: Optional[pd.Series]) -> str:
+        """
+        Build correction command for GU_missing row.
+        Safely returns empty string if mandatory parameters are missing.
+        """
         enb_func = pick_non_empty_value(rel_row, row, "ENodeBFunctionId")
         eu_cell = pick_non_empty_value(rel_row, row, "EUtranCellFDDId")
         freq_rel = pick_non_empty_value(rel_row, row, "GUtranFreqRelationId")
@@ -217,7 +214,7 @@ def build_gu_missing(
         coverage = pick_non_empty_value(rel_row, row, "coverageIndicator")
 
         # Overwrite GUtranFreqRelationId to a hardcoded value (new SSB) only when old SSB is found
-        if n77_ssb_pre and freq_rel.startswith(str(n77_ssb_pre)):
+        if n77_ssb_pre and isinstance(freq_rel, str) and freq_rel.startswith(str(n77_ssb_pre)):
             freq_rel = f"{n77_ssb_post}-30-20-0-1" if n77_ssb_post else freq_rel
 
         if not user_label:
@@ -228,7 +225,7 @@ def build_gu_missing(
 
         # NEW: keep only GUtraNetwork / ExternalGNodeBFunction / ExternalGUtranCell part
         clean_neighbor_ref = neighbor_ref
-        if "GUtraNetwork=" in neighbor_ref:
+        if isinstance(neighbor_ref, str) and "GUtraNetwork=" in neighbor_ref:
             pos = neighbor_ref.find("GUtraNetwork=")
             clean_neighbor_ref = neighbor_ref[pos:]
 
@@ -251,7 +248,7 @@ def build_gu_missing(
         lines = [p for p in parts if p]
         return "\n".join(lines)
 
-    df["Correction_Cmd"] = df.apply(build_command, axis=1)
+    df["Correction_Cmd"] = df.apply(lambda r: _build_correction_command(r, _get_rel_row(r)), axis=1)
 
     # Final column set: keep only relevant columns and force Correction_Cmd to be last
     desired_cols = [
@@ -269,9 +266,9 @@ def build_gu_missing(
 
 
 # ----------------------------------------------------------------------
-#  GU  -  DISC
+#  GU  -  DISCREPANCIES
 # ----------------------------------------------------------------------
-def build_gu_disc(
+def build_correction_command_gu_discrepancies(
     disc_df: pd.DataFrame,
     relations_df: Optional[pd.DataFrame],
     n77_ssb_pre: Optional[str] = None,
@@ -289,20 +286,28 @@ def build_gu_disc(
     if "NodeId" not in work.columns:
         work["NodeId"] = ""
 
-    del_df = build_gu_new(disc_df.copy(), relations_df)
-    create_df = build_gu_missing(disc_df.copy(), relations_df, n77_ssb_pre, n77_ssb_post)
+    # Reuse existing builders (they already include their own internal _build_correction_command)
+    del_df = build_correction_command_gu_new_relations(disc_df.copy(), relations_df)
+    create_df = build_correction_command_gu_missing_relations(disc_df.copy(), relations_df, n77_ssb_pre, n77_ssb_post)
 
     del_cmds = del_df.get("Correction_Cmd", pd.Series("", index=disc_df.index)).astype(str)
     create_cmds = create_df.get("Correction_Cmd", pd.Series("", index=disc_df.index)).astype(str)
 
-    def combine_cmds(del_cmd: str, create_cmd: str) -> str:
-        del_cmd = del_cmd.strip()
-        create_cmd = create_cmd.strip()
+    def _build_correction_command(del_cmd: str, create_cmd: str) -> str:
+        """
+        Build combined correction command for GU_disc row.
+        Safely returns empty string if both parts are empty.
+        """
+        del_cmd = (del_cmd or "").strip()
+        create_cmd = (create_cmd or "").strip()
         if del_cmd and create_cmd:
             return f"{del_cmd}\n{create_cmd}"
         return del_cmd or create_cmd
 
-    work["Correction_Cmd"] = [combine_cmds(d, c) for d, c in zip(del_cmds, create_cmds)]
+    work["Correction_Cmd"] = [
+        _build_correction_command(d, c) for d, c in zip(del_cmds, create_cmds)
+    ]
+
     # For _disc we keep all original discrepancy columns + Correction_Cmd
     return work
 
@@ -310,7 +315,7 @@ def build_gu_disc(
 # ----------------------------------------------------------------------
 #  NR  -  NEW
 # ----------------------------------------------------------------------
-def build_nr_new(df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.DataFrame:
+def build_correction_command_nr_new_relations(df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.DataFrame:
     """
     Add 'Correction_Cmd' column for NR_new sheet, using relation table as main data source.
 
@@ -370,26 +375,30 @@ def build_nr_new(df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.D
             extra_strip_cols=["nRCellRef"],
         )
 
-        # -----------------------------
-        # Build delete commands
-        # -----------------------------
-        def build_command(row: pd.Series) -> str:
+        def _get_rel_row(row: pd.Series) -> Optional[pd.Series]:
             key = (
                 str(row.get("NodeId", "")).strip(),
                 str(row.get("NRCellCUId", "")).strip(),
                 str(row.get("NRCellRelationId", "")).strip(),
             )
-            rel_row = relations_lookup.get(key)
-            src = rel_row if rel_row is not None else row
+            return relations_lookup.get(key)
 
+        # -----------------------------
+        # Build delete commands
+        # -----------------------------
+        def _build_correction_command(row: pd.Series, rel_row: Optional[pd.Series]) -> str:
+            """
+            Build correction command for NR_new row.
+            Safely returns empty string if mandatory parameters are missing.
+            """
+            src = rel_row if rel_row is not None else row
             nr_cell_cu = str(src.get("NRCellCUId") or "").strip()
             nr_cell_rel = str(src.get("NRCellRelationId") or "").strip()
             if not (nr_cell_cu and nr_cell_rel):
                 return ""
-
             return f"del NRCellCU={nr_cell_cu},NRCellRelation={nr_cell_rel}"
 
-        df["Correction_Cmd"] = df.apply(build_command, axis=1)
+        df["Correction_Cmd"] = df.apply(lambda r: _build_correction_command(r, _get_rel_row(r)), axis=1)
 
         # -----------------------------
         # Fill GNBCUCPFunctionId from nRCellRef (same logic style as missing/disc)
@@ -423,7 +432,7 @@ def build_nr_new(df: pd.DataFrame, relations_df: Optional[pd.DataFrame]) -> pd.D
 # ----------------------------------------------------------------------
 #  NR  -  MISSING
 # ----------------------------------------------------------------------
-def build_nr_missing(
+def build_correction_command_nr_missing_relations(
     df: pd.DataFrame,
     relations_df: Optional[pd.DataFrame],
     n77_ssb_pre: Optional[str] = None,
@@ -483,14 +492,19 @@ def build_nr_missing(
         relations_df, ["NodeId", "NRCellCUId", "NRCellRelationId"], extra_strip_cols=["nRCellRef"]
     )
 
-    def build_command(row: pd.Series) -> str:
+    def _get_rel_row(row: pd.Series) -> Optional[pd.Series]:
         key = (
             str(row.get("NodeId", "")).strip(),
             str(row.get("NRCellCUId", "")).strip(),
             str(row.get("NRCellRelationId", "")).strip(),
         )
-        rel_row = relations_lookup.get(key)
+        return relations_lookup.get(key)
 
+    def _build_correction_command(row: pd.Series, rel_row: Optional[pd.Series]) -> str:
+        """
+        Build correction command for NR_missing row.
+        Safely returns empty string if mandatory parameters are missing.
+        """
         nr_cell_cu = pick_non_empty_value(rel_row, row, "NRCellCUId")
         nr_cell_rel = pick_non_empty_value(rel_row, row, "NRCellRelationId")
         coverage = pick_non_empty_value(rel_row, row, "coverageIndicator")
@@ -505,12 +519,15 @@ def build_nr_missing(
 
         # --------- nRCellRef cleanup: keep everything from GNBCUCPFunction= ---------
         clean_nrcell_ref = ""
-        if "GNBCUCPFunction=" in nrcell_ref:
+        clean_nrcell_ref_short = ""
+        if isinstance(nrcell_ref, str) and "GNBCUCPFunction=" in nrcell_ref:
             clean_nrcell_ref = nrcell_ref[nrcell_ref.find("GNBCUCPFunction="):]
+            if "ExternalGNBCUCPFunction=" in nrcell_ref:
+                clean_nrcell_ref_short = nrcell_ref[nrcell_ref.find("ExternalGNBCUCPFunction="):]
 
         # --------- nRFreqRelationRef cleanup ---------
         clean_nrfreq_ref = ""
-        if "GNBCUCPFunction=" in nrfreq_ref:
+        if isinstance(nrfreq_ref, str) and "GNBCUCPFunction=" in nrfreq_ref:
             sub = nrfreq_ref[nrfreq_ref.find("GNBCUCPFunction="):]
             gnb_part = sub.split(",", 1)[0]
             gnb_val = gnb_part.split("=", 1)[1] if "=" in gnb_part else ""
@@ -528,6 +545,7 @@ def build_nr_missing(
                 clean_nrfreq_ref = f"GNBCUCPFunction={gnb_val},NRCellCU={nr_cell_for_freq},NRFreqRelation={freq_id}"
 
         parts = [
+            f"set {clean_nrcell_ref_short} nRFrequencyRef NRNetwork=1,NRFrequency={n77_ssb_post}-30" if clean_nrcell_ref_short else "",
             f"crn NRCellCU={nr_cell_cu},NRCellRelation={nr_cell_rel}",
             f"nRCellRef {clean_nrcell_ref}" if clean_nrcell_ref else "",
             f"nRFreqRelationRef {clean_nrfreq_ref}" if clean_nrfreq_ref else "",
@@ -548,7 +566,7 @@ def build_nr_missing(
         lines = [p for p in parts if p]
         return "\n".join(lines)
 
-    df["Correction_Cmd"] = df.apply(build_command, axis=1)
+    df["Correction_Cmd"] = df.apply(lambda r: _build_correction_command(r, _get_rel_row(r)), axis=1)
 
     # GNBCUCPFunctionId se rellena desde nRCellRef usando la tabla de relaciones
     df["GNBCUCPFunctionId"] = df.apply(
@@ -574,9 +592,9 @@ def build_nr_missing(
 
 
 # ----------------------------------------------------------------------
-#  NR  -  DISC
+#  NR  -  DISCREPANCIES
 # ----------------------------------------------------------------------
-def build_nr_disc(
+def build_correction_command_nr_discrepancies(
     disc_df: pd.DataFrame,
     relations_df: Optional[pd.DataFrame],
     n77_ssb_pre: Optional[str] = None,
@@ -616,20 +634,28 @@ def build_nr_disc(
         lambda r: extract_gnbcucp_segment(resolve_nrcell_ref(r, relations_lookup)), axis=1
     )
 
-    del_df = build_nr_new(disc_df.copy(), relations_df)
-    create_df = build_nr_missing(disc_df.copy(), relations_df, n77_ssb_pre, n77_ssb_post)
+    # Reuse existing builders (they already include their own internal _build_correction_command)
+    del_df = build_correction_command_nr_new_relations(disc_df.copy(), relations_df)
+    create_df = build_correction_command_nr_missing_relations(disc_df.copy(), relations_df, n77_ssb_pre, n77_ssb_post)
 
     del_cmds = del_df.get("Correction_Cmd", pd.Series("", index=disc_df.index)).astype(str)
     create_cmds = create_df.get("Correction_Cmd", pd.Series("", index=disc_df.index)).astype(str)
 
-    def combine_cmds(del_cmd: str, create_cmd: str) -> str:
-        del_cmd = del_cmd.strip()
-        create_cmd = create_cmd.strip()
+    def _build_correction_command(del_cmd: str, create_cmd: str) -> str:
+        """
+        Build combined correction command for NR_disc row.
+        Safely returns empty string if both parts are empty.
+        """
+        del_cmd = (del_cmd or "").strip()
+        create_cmd = (create_cmd or "").strip()
         if del_cmd and create_cmd:
             return f"{del_cmd}\n{create_cmd}"
         return del_cmd or create_cmd
 
-    work["Correction_Cmd"] = [combine_cmds(d, c) for d, c in zip(del_cmds, create_cmds)]
+    work["Correction_Cmd"] = [
+        _build_correction_command(d, c) for d, c in zip(del_cmds, create_cmds)
+    ]
+
     work = ensure_column_after(work, "GNBCUCPFunctionId", "NRCellRelationId")
 
     # Remove raw nRCellRef / nrCellRef column if it is completely empty
@@ -641,287 +667,92 @@ def build_nr_disc(
     # For _disc we keep all original discrepancy columns + GNBCUCPFunctionId + Correction_Cmd
     return work
 
-# ----------------------------- EXTERNAL/TERMPOINTS COMMANDS ----------------------------- #
-def export_external_and_termpoint_commands(
-    audit_post_excel: str,
-    output_dir: str,
-) -> int:
+
+# ----------------------------------------------------------------------
+#  EXTERNAL CELLS
+# ----------------------------------------------------------------------
+def build_correction_command_external_nr_cell_cu(n77_ssb_pre, n77_ssb_post, ext_gnb: str, ext_cell: str, nr_tail: str) -> str:
     """
-    Export correction commands coming from POST Configuration Audit Excel:
-      - ExternalNRCellCU (SSB-Post)
-      - ExternalNRCellCU (Unknown)
-      - ExternalGUtranCell (SSB-Post)
-      - ExternalGUtranCell (Unknown)
-      - TermPointToGNB
-      - TermPointToGNodeB
-
-    Files are written under:
-      <output_dir>/Correction_Cmd/ExternalNRCellCU/{SSB-Post,Unknown}
-      <output_dir>/Correction_Cmd/ExternalGUtranCell/{SSB-Post,Unknown}
-      <output_dir>/Correction_Cmd/TermPointToGNB
-      <output_dir>/Correction_Cmd/TermPointToGNodeB
-
-    One text file per NodeId is generated (grouped like other Correction_Cmd exports).
-
-    Returns the number of generated files.
+    Build correction command replacing old N77 SSB with new N77 SSB inside nr_tail.
+    Safely returns empty string if mandatory parameters are missing.
     """
+    if not ext_gnb or not ext_cell or not nr_tail:
+        return ""
 
-    def _read_sheet_case_insensitive(audit_excel: str, sheet_name: str) -> Optional[pd.DataFrame]:
-        """
-        Read a sheet using case-insensitive matching. Returns None if not found or on error.
-        """
-        if not audit_excel or not os.path.isfile(audit_excel):
-            return None
+    nr_tail = str(nr_tail).replace(str(n77_ssb_pre), str(n77_ssb_post))
 
-        try:
-            xl = pd.ExcelFile(audit_excel)
-            sheet_map = {s.lower(): s for s in xl.sheet_names}
-            real_sheet = sheet_map.get(str(sheet_name).lower())
-            if not real_sheet:
-                return None
-            return xl.parse(real_sheet)
-        except Exception:
-            return None
-
-    def _export_grouped_commands_from_sheet(
-            audit_excel: str,
-            sheet_name: str,
-            output_dir: str,
-            command_column: str = "Correction_Cmd",
-            node_column: str = "NodeId",
-            filter_column: Optional[str] = None,
-            filter_values: Optional[list[str]] = None,
-            filename_suffix: Optional[str] = None,
-    ) -> int:
-        """
-        Export Correction_Cmd grouped by NodeId from a given sheet into output_dir.
-        Returns how many files were generated.
-        """
-        df = _read_sheet_case_insensitive(audit_excel, sheet_name)
-        if df is None or df.empty:
-            return 0
-
-        # Allow backward compatibility with old column name
-        if command_column not in df.columns and "Correction Command" in df.columns:
-            command_column = "Correction Command"
-
-        if command_column not in df.columns:
-            return 0
-
-        if node_column not in df.columns:
-            return 0
-
-        if filter_column and filter_column in df.columns and filter_values is not None:
-            allowed = {str(v).strip() for v in filter_values}
-            df = df[df[filter_column].astype(str).str.strip().isin(allowed)]
-
-        if df.empty:
-            return 0
-
-        os.makedirs(output_dir, exist_ok=True)
-
-        work = df.copy()
-        work[node_column] = work[node_column].astype(str).str.strip()
-
-        suffix = filename_suffix if filename_suffix else str(sheet_name).strip()
-        generated_files = 0
-
-        for node_id, group in work.groupby(node_column):
-            node_str = str(node_id).strip()
-            if not node_str:
-                continue
-
-            # IMPORTANT: do NOT cast the whole column to str before dropna(), otherwise NaN becomes "nan"
-            raw_series = group[command_column]
-            raw_series = raw_series[raw_series.notna()]
-
-            cmds = (
-                raw_series
-                .astype(str)
-                .map(str.strip)
-                .loc[lambda s: (s != "") & (s.str.lower() != "nan") & (s.str.lower() != "none")]
-                .tolist()
-            )
-
-            if not cmds:
-                continue
-
-            file_name = f"{node_str}_{suffix}.txt"
-            out_path = os.path.join(output_dir, file_name)
-            out_path_long = to_long_path(out_path)
-
-            merged_script = merge_command_blocks_for_node(cmds)
-            if not merged_script.strip():
-                continue
-
-            with open(out_path_long, "w", encoding="utf-8") as f:
-                f.write(merged_script)
-
-            generated_files += 1
-
-        return generated_files
-
-    if not audit_post_excel or not os.path.isfile(audit_post_excel):
-        return 0
-
-    base_dir = os.path.join(output_dir, "Correction_Cmd")
-
-    ext_nr_base = os.path.join(base_dir, "ExternalNRCellCU")
-    ext_gu_base = os.path.join(base_dir, "ExternalGUtranCell")
-    tp_gnb_dir = os.path.join(base_dir, "TermPointToGNB")
-    tp_gnodeb_dir = os.path.join(base_dir, "TermPointToGNodeB")
-
-    ext_nr_ssbpost_dir = os.path.join(ext_nr_base, "SSB-Post")
-    ext_nr_unknown_dir = os.path.join(ext_nr_base, "Unknown")
-    ext_gu_ssbpost_dir = os.path.join(ext_gu_base, "SSB-Post")
-    ext_gu_unknown_dir = os.path.join(ext_gu_base, "Unknown")
-
-    os.makedirs(ext_nr_ssbpost_dir, exist_ok=True)
-    os.makedirs(ext_nr_unknown_dir, exist_ok=True)
-    os.makedirs(ext_gu_ssbpost_dir, exist_ok=True)
-    os.makedirs(ext_gu_unknown_dir, exist_ok=True)
-    os.makedirs(tp_gnb_dir, exist_ok=True)
-    os.makedirs(tp_gnodeb_dir, exist_ok=True)
-
-    generated = 0
-
-    # -----------------------------
-    # ExternalNRCellCU - SSB-Post / Unknown
-    # -----------------------------
-    generated += _export_grouped_commands_from_sheet(
-        audit_excel=audit_post_excel,
-        sheet_name="ExternalNRCellCU",
-        output_dir=ext_nr_ssbpost_dir,
-        command_column="Correction_Cmd",
-        filter_column="GNodeB_SSB_Target",
-        filter_values=["SSB-Post"],
-        filename_suffix="ExternalNRCellCU",
-    )
-    generated += _export_grouped_commands_from_sheet(
-        audit_excel=audit_post_excel,
-        sheet_name="ExternalNRCellCU",
-        output_dir=ext_nr_unknown_dir,
-        command_column="Correction_Cmd",
-        filter_column="GNodeB_SSB_Target",
-        filter_values=["Unknown", "Unkwnow"],
-        filename_suffix="ExternalNRCellCU",
+    return (
+        "confb+\n"
+        "gs+\n"
+        "lt all\n"
+        "alt\n"
+        f"set ExternalGNBCUCPFunction={ext_gnb},ExternalNRCellCU={ext_cell} nRFrequencyRef {nr_tail}\n"
+        "alt"
     )
 
-    # -----------------------------
-    # ExternalGUtranCell - SSB-Post / Unknown
-    # -----------------------------
-    generated += _export_grouped_commands_from_sheet(
-        audit_excel=audit_post_excel,
-        sheet_name="ExternalGUtranCell",
-        output_dir=ext_gu_ssbpost_dir,
-        command_column="Correction_Cmd",
-        filter_column="GNodeB_SSB_Target",
-        filter_values=["SSB-Post"],
-        filename_suffix="ExternalGUtranCell",
-    )
-    generated += _export_grouped_commands_from_sheet(
-        audit_excel=audit_post_excel,
-        sheet_name="ExternalGUtranCell",
-        output_dir=ext_gu_unknown_dir,
-        command_column="Correction_Cmd",
-        filter_column="GNodeB_SSB_Target",
-        filter_values=["Unknown", "Unkwnow"],
-        filename_suffix="ExternalGUtranCell",
-    )
 
-    # -----------------------------
-    # TermPointToGNodeB
-    # -----------------------------
-    generated += _export_grouped_commands_from_sheet(
-        audit_excel=audit_post_excel,
-        sheet_name="TermPointToGNodeB",
-        output_dir=tp_gnodeb_dir,
-        command_column="Correction_Cmd",
-        filename_suffix="TermPointToGNodeB",
-    )
-
-    # -----------------------------
-    # TermPointToGNB
-    # -----------------------------
-    generated += _export_grouped_commands_from_sheet(
-        audit_excel=audit_post_excel,
-        sheet_name="TermPointToGNB",
-        output_dir=tp_gnb_dir,
-        command_column="Correction_Cmd",
-        filename_suffix="TermPointToGNB",
-    )
-
-    if generated:
-        print(
-            f"[Consistency Checks] Generated {generated} extra Correction_Cmd files "
-            f"from POST Configuration Audit in: '{pretty_path(base_dir)}'"
-        )
-
-    return generated
-
+def build_correction_command_external_gutran_cell(ext_gnb: str, ext_cell: str, ssb_post: object) -> str:
+    """
+    Build correction command for ExternalGUtranCell switching to Post SSB.
+    Safely returns empty string if mandatory parameters are missing.
+    """
+    if not ext_gnb or not ext_cell or ssb_post is None:
+        return ""
+    return f"set ExternalGNodeBFunction={ext_gnb},ExternalGUtranCell={ext_cell} gUtranSyncSignalFrequencyRef GUtraNetwork=1,GUtranSyncSignalFrequency={ssb_post}-30\n"
 
 
 # ----------------------------------------------------------------------
-#  EXPORT TEXT FILES
+#  TERMPOINTS
 # ----------------------------------------------------------------------
-def export_correction_cmd_texts(output_dir: str, dfs_by_category: Dict[str, pd.DataFrame]) -> int:
+def build_correction_command_termpoint_to_gnodeb(ext_gnb: str, ssb_post: int, ssb_pre: int) -> str:
     """
-    Export Correction_Cmd values to text files grouped by NodeId and category.
-
-    For each category (e.g. GU_missing, NR_new), one file per NodeId is created in:
-      <output_dir>/Correction_Cmd/<NodeId>_<Category>.txt
+    Build correction command for TermPointToGNodeB.
+    Safely returns empty string if ext_gnb is missing.
     """
-    base_dir = os.path.join(output_dir, "Correction_Cmd")
-    os.makedirs(base_dir, exist_ok=True)
+    if not ext_gnb:
+        return ""
 
-    new_dir = os.path.join(base_dir, "New Relations")
-    missing_dir = os.path.join(base_dir, "Missing Relations")
-    discrepancies_dir = os.path.join(base_dir, "Discrepancies")
-    os.makedirs(new_dir, exist_ok=True)
-    os.makedirs(missing_dir, exist_ok=True)
-    os.makedirs(discrepancies_dir, exist_ok=True)
-
-    total_files = 0
-
-    for category, df in dfs_by_category.items():
-        if df is None or df.empty:
-            continue
-        if "NodeId" not in df.columns or "Correction_Cmd" not in df.columns:
-            continue
-
-        work = df.copy()
-        work["NodeId"] = work["NodeId"].astype(str).str.strip()
-        work["Correction_Cmd"] = work["Correction_Cmd"].astype(str)
-
-        for node_id, group in work.groupby("NodeId"):
-            node_str = str(node_id).strip()
-            if not node_str:
-                continue
-
-            cmds = [cmd for cmd in group["Correction_Cmd"] if cmd.strip()]
-            if not cmds:
-                continue
-
-            if "new" in category.lower():
-                target_dir = new_dir
-            elif "missing" in category.lower():
-                target_dir = missing_dir
-            elif "disc" in category.lower():
-                target_dir = discrepancies_dir
-            else:
-                target_dir = base_dir
-
-            file_name = f"{node_str}_{category}.txt"
-            file_path = os.path.join(target_dir, file_name)
-            file_path_long = to_long_path(file_path)
-
-            with open(file_path_long, "w", encoding="utf-8") as f:
-                f.write("\n\n".join(cmds))
-
-            total_files += 1
-
-    print(
-        f"\n[Consistency Checks (Pre/Post Comparison)] "
-        f"Generated {total_files} Correction_Cmd text files in: '{pretty_path(base_dir)}'"
+    return (
+        "confb+\n"
+        "lt all\n"
+        "alt\n"
+        f"hget ExternalGNBCUCPFunction={ext_gnb},ExternalNRCellCU nRFrequencyRef {ssb_post}\n"
+        f"hget ExternalGNBCUCPFunction={ext_gnb},ExternalNRCellCU nRFrequencyRef {ssb_pre}\n"
+        f"get ExternalGNBCUCPFunction={ext_gnb},TermpointToGnodeB\n"
+        f"bl ExternalGNBCUCPFunction={ext_gnb},TermpointToGnodeB\n"
+        "wait 5\n"
+        f"deb ExternalGNBCUCPFunction={ext_gnb},TermpointToGnodeB\n"
+        "wait 10\n"
+        "lt all\n"
+        f"get ExternalGNBCUCPFunction={ext_gnb},TermpointToGnodeB\n"
+        f"hget ExternalGNBCUCPFunction={ext_gnb},ExternalNRCellCU nRFrequencyRef {ssb_post}\n"
+        f"hget ExternalGNBCUCPFunction={ext_gnb},ExternalNRCellCU nRFrequencyRef {ssb_pre}\n"
+        "alt"
     )
-    return total_files
+
+
+def build_correction_command_termpoint_to_gnb(ext_gnb: str, ssb_post: object, ssb_pre: object) -> str:
+    """
+    Build correction command for TermPointToGNB (LTE -> NR).
+    Safely returns empty string if ext_gnb is missing.
+    """
+    if not ext_gnb:
+        return ""
+
+    return (
+        "confb+\n"
+        "lt all\n"
+        "alt\n"
+        f"hget ExternalGNodeBFunction={ext_gnb},ExternalGUtranCell gUtranSyncSignalFrequencyRef {ssb_post}\n"
+        f"hget ExternalGNodeBFunction={ext_gnb},ExternalGUtranCell gUtranSyncSignalFrequencyRef {ssb_pre}\n"
+        f"get ExternalGNodeBFunction={ext_gnb},TermpointToGNB\n"
+        f"bl ExternalGNodeBFunction={ext_gnb},TermpointToGNB\n"
+        "wait 5\n"
+        f"deb ExternalGNodeBFunction={ext_gnb},TermpointToGNB\n"
+        "wait 10\n"
+        "lt all\n"
+        f"get ExternalGNodeBFunction={ext_gnb},TermpointToGNB\n"
+        f"hget ExternalGNodeBFunction={ext_gnb},ExternalGUtranCell gUtranSyncSignalFrequencyRef {ssb_post}\n"
+        f"hget ExternalGNodeBFunction={ext_gnb},ExternalGUtranCell gUtranSyncSignalFrequencyRef {ssb_pre}\n"
+        "alt"
+    )
