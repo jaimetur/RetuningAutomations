@@ -1006,7 +1006,7 @@ def run_consistency_checks_for_market_pairs(
 
         print(f"\n{module_name} {market_tag} Outputs saved to: '{pretty_path(output_dir)}'")
         if results:
-            print(f"{module_name} {market_tag} Wrote CellRelation.xlsx and CellRelationDiscrepancies.xlsx (with Summary and details).")
+            print(f"{module_name} {market_tag} Wrote CellRelation.xlsx and ConsistencyChecks_CellRelation.xlsx (with Summary and details).")
         else:
             print(f"{module_name} {market_tag} Wrote CellRelation.xlsx (all tables). No comparison Excel because frequencies were not provided.")
 
