@@ -32,7 +32,7 @@ from src.utils.utils_datetime import format_duration_hms
 from src.utils.utils_dialog import tk, ttk, filedialog, messagebox, ask_reopen_launcher, ask_yes_no_dialog, ask_yes_no_dialog_custom
 from src.utils.utils_infrastructure import LoggerDual
 from src.utils.utils_io import load_cfg_values, save_cfg_values, log_module_exception, to_long_path, pretty_path, folder_has_valid_logs, detect_pre_post_subfolders, write_compared_folders_file
-from src.utils.utils_parsing import normalize_csv_list, parse_arfcn_csv_to_set, cap_rows
+from src.utils.utils_parsing import normalize_csv_list, parse_arfcn_csv_to_set
 
 from src.modules.ConsistencyChecks.ConsistencyChecks import ConsistencyChecks
 from src.modules.ConfigurationAudit import ConfigurationAudit
@@ -71,7 +71,7 @@ NETWORK_FREQUENCIES: List[str] = [
 
 # Frequencies (single Pre/Post used by ConsistencyChecks)
 DEFAULT_N77_SSB_PRE = "648672"
-DEFAULT_N77_SSBQ_POST = "647328"
+DEFAULT_N77_SSB_POST = "647328"
 
 # Default N77B SSB frequency
 DEFAULT_N77B_SSB = "653952"
@@ -187,7 +187,7 @@ def gui_config_dialog(
     default_input_initial_cleanup: str = "",
     default_input_final_cleanup: str = "",
     default_n77_ssb_pre: str = DEFAULT_N77_SSB_PRE,
-    default_n77_ssb_post: str = DEFAULT_N77_SSBQ_POST,
+    default_n77_ssb_post: str = DEFAULT_N77_SSB_POST,
     default_n77b_ssb: str = DEFAULT_N77B_SSB,
     default_ca_filters_csv: str = "",
     default_cc_filters_csv: str = "",
@@ -643,9 +643,9 @@ def run_configuration_audit(
         local_n77_ssb_pre = int(DEFAULT_N77_SSB_PRE)
 
     try:
-        local_n77_ssb_post = int(n77_ssb_post) if n77_ssb_post else int(DEFAULT_N77_SSBQ_POST)
+        local_n77_ssb_post = int(n77_ssb_post) if n77_ssb_post else int(DEFAULT_N77_SSB_POST)
     except ValueError:
-        local_n77_ssb_post = int(DEFAULT_N77_SSBQ_POST)
+        local_n77_ssb_post = int(DEFAULT_N77_SSB_POST)
 
     # N77B SSB
     local_n77b_ssb = n77b_ssb
@@ -858,159 +858,9 @@ def run_configuration_audit(
     return last_excel
 
 
-def run_consistency_checks_for_market_pairs(
-    market_pairs: Dict[str, Tuple[str, str]],
-    n77_ssb_pre: Optional[str],
-    n77_ssb_post: Optional[str],
-    n77b_ssb: Optional[str],
-    ca_freq_filters_csv: str,
-    cc_freq_filters_csv: str,
-    allowed_n77_ssb_pre_csv: Optional[str],
-    allowed_n77_arfcn_pre_csv: Optional[str],
-    allowed_n77_ssb_post_csv: Optional[str],
-    allowed_n77_arfcn_post_csv: Optional[str],
-    versioned_suffix: str,
-    module_name: str,
-) -> None:
-    """
-    Shared logic to run ConfigurationAudit + ConsistencyChecks for each
-    PRE/POST market pair.
-
-    This function is used by:
-    - run_consistency_checks_manual (explicit PRE/POST)
-    - run_consistency_checks_bulk   (auto-detected PRE/POST with markets)
-    """
-
-    # Normalize filters once here so they are reused for all markets
-    ca_freq_filters_csv = normalize_csv_list(ca_freq_filters_csv or "")
-    cc_freq_filters_csv = normalize_csv_list(cc_freq_filters_csv or "648672,647328")
-
-    cc_filter_list = [x.strip() for x in cc_freq_filters_csv.split(",") if x.strip()]
-    print(f"{module_name} Consistency Checks Filters: {cc_filter_list}" if cc_filter_list else f"{module_name} Consistency Checks Filters: (no filter)")
-
-    for market_label, (pre_dir, post_dir) in sorted(market_pairs.items()):
-        market_tag = f"[Market: {market_label}]" if market_label != "GLOBAL" else ""
-        print(f"\n{module_name} Processing Market: {market_label}")
-        print("=" * 80)
-        print(f"{module_name} {market_tag} Processing PRE/POST pair:")
-        print(f"{module_name} {market_tag} PRE folder:  '{pretty_path(pre_dir)}'")
-        print(f"{module_name} {market_tag} POST folder: '{pretty_path(post_dir)}'")
-
-        pre_dir_fs = to_long_path(pre_dir)
-        post_dir_fs = to_long_path(post_dir)
-
-        # NEW: compute output_dir upfront so both audits and consistency outputs land together
-        if market_label != "GLOBAL":
-            output_dir = os.path.join(post_dir_fs, f"ConsistencyChecks_{versioned_suffix}_{market_label}")
-        else:
-            output_dir = os.path.join(post_dir_fs, f"ConsistencyChecks_{versioned_suffix}")
-        os.makedirs(output_dir, exist_ok=True)
-
-        # NEW: write FoldersCompared.txt with the exact PRE/POST folders used
-        try:
-            txt_path = write_compared_folders_file(output_dir=output_dir, pre_dir=pre_dir_fs, post_dir=post_dir_fs)
-            if txt_path:
-                print(f"{module_name} {market_tag} Compared folders file written: '{pretty_path(txt_path)}'")
-        except Exception as ex:
-            print(f"{module_name} {market_tag} [WARN] Failed to write FoldersCompared.txt: {ex}")
-
-
-        # NEW: Build Pre/Post audit suffixes (Pre/Post before the timestamp)
-        audit_pre_suffix = f"Pre_{versioned_suffix}"
-        audit_post_suffix = f"Post_{versioned_suffix}"
-
-        # --- Run Configuration Audit for PRE and POST ---
-        print(f"{module_name} {market_tag} Running Configuration Audit for PRE folder before consistency checks...")
-        print("-" * 80)
-        pre_audit_excel = run_configuration_audit(
-            input_dir=pre_dir_fs,
-            ca_freq_filters_csv=ca_freq_filters_csv,
-            n77_ssb_pre=n77_ssb_pre,
-            n77_ssb_post=n77_ssb_post,
-            n77b_ssb=n77b_ssb,
-            allowed_n77_ssb_pre_csv=allowed_n77_ssb_pre_csv,
-            allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
-            allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
-            allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
-            versioned_suffix=audit_pre_suffix,                 # NEW
-            market_label=market_label,
-            external_output_dir=output_dir,                    # NEW
-        )
-        print("-" * 80)
-        if pre_audit_excel:
-            print(f"{module_name} {market_tag} PRE Configuration Audit output: '{pretty_path(pre_audit_excel)}'")
-        else:
-            print(f"{module_name} {market_tag} PRE Configuration Audit did not generate an output Excel file.")
-
-        print(f"{module_name} {market_tag} Running Configuration Audit for POST folder before consistency checks...")
-        print("-" * 80)
-        post_audit_excel = run_configuration_audit(
-            input_dir=post_dir_fs,
-            ca_freq_filters_csv=ca_freq_filters_csv,
-            n77_ssb_pre=n77_ssb_pre,
-            n77_ssb_post=n77_ssb_post,
-            n77b_ssb=n77b_ssb,
-            allowed_n77_ssb_pre_csv=allowed_n77_ssb_pre_csv,
-            allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
-            allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
-            allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
-            versioned_suffix=audit_post_suffix,                # NEW
-            market_label=market_label,
-            external_output_dir=output_dir,                    # NEW
-        )
-        print("-" * 80)
-        if post_audit_excel:
-            print(f"{module_name} {market_tag} POST Configuration Audit output: '{pretty_path(post_audit_excel)}'")
-        else:
-            print(f"{module_name} {market_tag} POST Configuration Audit did not generate an output Excel file.")
-
-        # --- Run ConsistencyChecks for this market ---
-        try:
-            app = ConsistencyChecks(n77_ssb_pre=n77_ssb_pre, n77_ssb_post=n77_ssb_post, freq_filter_list=cc_filter_list)
-        except TypeError:
-            app = ConsistencyChecks(n77_ssb_pre=n77_ssb_pre, n77_ssb_post=n77_ssb_post)
-
-        loaded = False
-        try:
-            app.loadPrePost(pre_dir_fs, post_dir_fs)
-            loaded = True
-        except TypeError:
-            loaded = False
-
-        if not loaded:
-            print(f"{module_name} {market_tag} [ERROR] ConsistencyChecks class does not support dual folders (Pre/Post).")
-            print(f"{module_name} {market_tag}         Please update ConsistencyChecks.loadPrePost(pre_dir, post_dir) to enable dual-input mode.")
-            continue
-
-        results = None
-        if n77_ssb_pre and n77_ssb_post:
-            try:
-                # Preferred new signature: (old_ssb, new_ssb, module_name, pre_audit_excel, post_audit_excel)
-                results = app.comparePrePost(n77_ssb_pre, n77_ssb_post, module_name, pre_audit_excel, post_audit_excel)
-            except TypeError:
-                try:
-                    # Fallback: older version that only knows post_audit_excel
-                    results = app.comparePrePost(n77_ssb_pre, n77_ssb_post, module_name, post_audit_excel)
-                except TypeError:
-                    try:
-                        # Fallback: older version that only knows module_name
-                        results = app.comparePrePost(n77_ssb_pre, n77_ssb_post, module_name)
-                    except TypeError:
-                        # Legacy: only (old_ssb, new_ssb)
-                        results = app.comparePrePost(n77_ssb_pre, n77_ssb_post)
-        else:
-            print(f"{module_name} {market_tag} [INFO] Frequencies not provided. Comparison will be skipped; only tables will be saved.")
-
-        # output_dir is already the shared folder (audits + consistency outputs)
-        app.save_outputs_excel(output_dir, results, versioned_suffix=versioned_suffix)
-
-        print(f"\n{module_name} {market_tag} Outputs saved to: '{pretty_path(output_dir)}'")
-        if results:
-            print(f"{module_name} {market_tag} Wrote CellRelation.xlsx and ConsistencyChecks_CellRelation.xlsx (with Summary and details).")
-        else:
-            print(f"{module_name} {market_tag} Wrote CellRelation.xlsx (all tables). No comparison Excel because frequencies were not provided.")
-
-def run_consistency_checks_manual(
+# ----------------------------- NEW: Unified Consistency Checks runner ----------------------------- #
+def run_consistency_checks(
+    input_dir: Optional[str],
     input_pre_dir: Optional[str],
     input_post_dir: Optional[str],
     n77_ssb_pre: Optional[str],
@@ -1022,214 +872,329 @@ def run_consistency_checks_manual(
     allowed_n77_arfcn_pre_csv: Optional[str] = None,
     allowed_n77_ssb_post_csv: Optional[str] = None,
     allowed_n77_arfcn_post_csv: Optional[str] = None,
+    mode: str = "",
 ) -> None:
     """
-    Runner for ConsistencyChecks in MANUAL mode (module 2).
+    Unified runner for ConsistencyChecks:
+      - Manual mode: explicit PRE/POST folders
+      - Bulk mode: single base folder with auto-detection of PRE/POST + markets
 
-    Behavior:
-    ---------
-    - Both PRE and POST folders MUST be explicitly provided.
-    - Auto-detection is NOT used here.
-    - Both PRE and POST folders MUST contain valid logs (folder_has_valid_logs).
-      If one of them does not, a warning dialog is shown and no processing is done.
-    - A single GLOBAL pair is processed: (PRE, POST).
+    Mode selection:
+      - If mode contains 'bulk' -> Bulk mode
+      - Else -> Manual mode
+
+    Shared logic to run ConfigurationAudit + ConsistencyChecks for each
+    PRE/POST market pair.
+
+    This function is used by:
+    - run_consistency_checks_manual (explicit PRE/POST)
+    - run_consistency_checks_bulk   (auto-detected PRE/POST with markets)
     """
-    module_name = "[Consistency Checks (Pre/Post Comparison)]"
-    print(f"{module_name} Running Consistency Check (manual mode)…")
+
+    # Normalize mode early (GUI passes module label, CLI passes module key)
+    mode_low = (mode or "").strip().lower()
+    is_bulk = ("bulk" in mode_low) or (mode_low == "consistency-check-bulk") or (mode_low == MODULE_NAMES[2].lower())
+
+    module_name = "[Consistency Checks (Bulk Pre/Post Auto-Detection)]" if is_bulk else "[Consistency Checks (Pre/Post Comparison)]"
+    print(f"{module_name} Running Consistency Check ({'bulk mode' if is_bulk else 'manual mode'})…")
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     versioned_suffix = f"{timestamp}_v{TOOL_VERSION}"
 
-    pre_dir = (input_pre_dir or "").strip()
-    post_dir = (input_post_dir or "").strip()
+    # Normalize filters once here so they are reused for all markets
+    ca_freq_filters_csv = normalize_csv_list(ca_freq_filters_csv or "")
+    cc_freq_filters_csv = normalize_csv_list(cc_freq_filters_csv or "648672,647328")
 
-    # Strict requirement: both PRE and POST must be provided
-    if not pre_dir or not post_dir:
-        msg = (
-            "Both PRE and POST folders are required for manual Consistency Check.\n\n"
-            "Please select both folders in the launcher dialog."
-        )
-        print(f"{module_name} [WARNING] {msg}")
-        if messagebox is not None:
-            try:
-                messagebox.showwarning("Missing Pre/Post folders", msg)
-            except Exception:
-                pass
-        return
+    cc_filter_list = [x.strip() for x in cc_freq_filters_csv.split(",") if x.strip()]
+    print(f"{module_name} Consistency Checks Filters: {cc_filter_list}" if cc_filter_list else f"{module_name} Consistency Checks Filters: (no filter)")
 
-    pre_dir_fs = to_long_path(pre_dir)
-    post_dir_fs = to_long_path(post_dir)
+    # ----------------------------- MANUAL MODE (module 2) ----------------------------- #
+    def run_consistency_check_manual() -> Optional[Dict[str, Tuple[str, str]]]:
+        """
+        Runner for ConsistencyChecks in MANUAL mode (module 2).
 
-    # Check that both PRE and POST contain valid logs
-    pre_ok = False
-    post_ok = False
-    try:
-        pre_ok = folder_has_valid_logs(pre_dir_fs)
-    except Exception:
+        Behavior:
+        ---------
+        - Both PRE and POST folders MUST be explicitly provided.
+        - Auto-detection is NOT used here.
+        - Both PRE and POST folders MUST contain valid logs (folder_has_valid_logs).
+          If one of them does not, a warning dialog is shown and no processing is done.
+        - A single GLOBAL pair is processed: (PRE, POST).
+        """
+        pre_dir = (input_pre_dir or "").strip()
+        post_dir = (input_post_dir or "").strip()
+
+        # Strict requirement: both PRE and POST must be provided
+        if not pre_dir or not post_dir:
+            msg = (
+                "Both PRE and POST folders are required for manual Consistency Check.\n\n"
+                "Please select both folders in the launcher dialog."
+            )
+            print(f"{module_name} [WARNING] {msg}")
+            if messagebox is not None:
+                try:
+                    messagebox.showwarning("Missing Pre/Post folders", msg)
+                except Exception:
+                    pass
+            return None
+
+        pre_dir_fs = to_long_path(pre_dir)
+        post_dir_fs = to_long_path(post_dir)
+
+        # Check that both PRE and POST contain valid logs
         pre_ok = False
-    try:
-        post_ok = folder_has_valid_logs(post_dir_fs)
-    except Exception:
         post_ok = False
+        try:
+            pre_ok = folder_has_valid_logs(pre_dir_fs)
+        except Exception:
+            pre_ok = False
+        try:
+            post_ok = folder_has_valid_logs(post_dir_fs)
+        except Exception:
+            post_ok = False
 
-    if not pre_ok or not post_ok:
-        missing_parts = []
-        if not pre_ok:
-            missing_parts.append(f"PRE: '{pretty_path(pre_dir_fs)}'")
-        if not post_ok:
-            missing_parts.append(f"POST: '{pretty_path(post_dir_fs)}'")
-        msg_lines = [
-            "It was not possible to find valid *.log/*.logs/*.txt files with 'SubNetwork' rows in:",
-            *[f"  - {p}" for p in missing_parts],
-            "",
-            "Please ensure both PRE and POST folders contain valid logs before running the Consistency Check.",
-        ]
-        msg = "\n".join(msg_lines)
-        print(f"{module_name} [WARNING] {msg}")
-        if messagebox is not None:
-            try:
-                messagebox.showwarning("No valid logs found in Pre/Post folders", msg)
-            except Exception:
-                pass
-        return
+        if not pre_ok or not post_ok:
+            missing_parts = []
+            if not pre_ok:
+                missing_parts.append(f"PRE: '{pretty_path(pre_dir_fs)}'")
+            if not post_ok:
+                missing_parts.append(f"POST: '{pretty_path(post_dir_fs)}'")
+            msg_lines = [
+                "It was not possible to find valid *.log/*.logs/*.txt files with 'SubNetwork' rows in:",
+                *[f"  - {p}" for p in missing_parts],
+                "",
+                "Please ensure both PRE and POST folders contain valid logs before running the Consistency Check.",
+            ]
+            msg = "\n".join(msg_lines)
+            print(f"{module_name} [WARNING] {msg}")
+            if messagebox is not None:
+                try:
+                    messagebox.showwarning("No valid logs found in Pre/Post folders", msg)
+                except Exception:
+                    pass
+            return None
 
-    # Single GLOBAL market pair
-    market_pairs: Dict[str, Tuple[str, str]] = {"GLOBAL": (pre_dir_fs, post_dir_fs)}
+        # Single GLOBAL market pair
+        market_pairs: Dict[str, Tuple[str, str]] = {"GLOBAL": (pre_dir_fs, post_dir_fs)}
+        return market_pairs
 
-    run_consistency_checks_for_market_pairs(
-        market_pairs=market_pairs,
-        n77_ssb_pre=n77_ssb_pre,
-        n77_ssb_post=n77_ssb_post,
-        n77b_ssb=n77b_ssb,
-        ca_freq_filters_csv=ca_freq_filters_csv,
-        cc_freq_filters_csv=cc_freq_filters_csv,
-        allowed_n77_ssb_pre_csv=allowed_n77_ssb_pre_csv,
-        allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
-        allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
-        allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
-        versioned_suffix=versioned_suffix,
-        module_name=module_name,
-    )
+    # ----------------------------- BULK MODE (module 3) ----------------------------- #
+    def run_consistency_check_bulk() -> Optional[Dict[str, Tuple[str, str]]]:
+        """
+        Runner for ConsistencyChecks in BULK mode (module 3).
 
+        Behavior:
+        ---------
+        - Only ONE base folder is provided (typically the root 'WP2_SamsungBorder_Logs').
+        - detect_pre_post_subfolders(base_dir) is used to:
+            * Find PRE and POST Step0 runs based on date/time.
+            * Detect markets inside those runs (Indiana, Westside, etc.).
+        - A confirmation dialog lists all markets and their PRE/POST folders.
+        - If accepted, for each market:
+            - Configuration Audit is executed for PRE.
+            - Configuration Audit is executed for POST.
+            - ConsistencyChecks is executed for that market.
+        - If no valid PRE/POST pair is found, a warning dialog is shown and no
+          processing is done.
+        """
+        base_dir = (input_dir or "").strip()
+        if not base_dir:
+            msg = "A base folder is required for bulk Consistency Check."
+            print(f"{module_name} [WARNING] {msg}")
+            if messagebox is not None:
+                try:
+                    messagebox.showwarning("Missing base folder", msg)
+                except Exception:
+                    pass
+            return None
 
-def run_consistency_checks_bulk(
-    input_base_dir: Optional[str],
-    _unused_post_dir: Optional[str],
-    n77_ssb_pre: Optional[str],
-    n77_ssb_post: Optional[str],
-    n77b_ssb: Optional[str] = None,
-    ca_freq_filters_csv: str = "",
-    cc_freq_filters_csv: str = "",
-    allowed_n77_ssb_pre_csv: Optional[str] = None,
-    allowed_n77_arfcn_pre_csv: Optional[str] = None,
-    allowed_n77_ssb_post_csv: Optional[str] = None,
-    allowed_n77_arfcn_post_csv: Optional[str] = None,
-) -> None:
-    """
-    Runner for ConsistencyChecks in BULK mode (module 3).
+        base_dir_fs = to_long_path(base_dir)
+        if not os.path.isdir(base_dir_fs):
+            msg = f"Base folder does not exist or is not a directory:\n'{pretty_path(base_dir_fs)}'"
+            print(f"{module_name} [WARNING] {msg}")
+            if messagebox is not None:
+                try:
+                    messagebox.showwarning("Invalid base folder", msg)
+                except Exception:
+                    pass
+            return None
 
-    Behavior:
-    ---------
-    - Only ONE base folder is provided (typically the root 'WP2_SamsungBorder_Logs').
-    - detect_pre_post_subfolders(base_dir) is used to:
-        * Find PRE and POST Step0 runs based on date/time.
-        * Detect markets inside those runs (Indiana, Westside, etc.).
-    - A confirmation dialog lists all markets and their PRE/POST folders.
-    - If accepted, for each market:
-        - Configuration Audit is executed for PRE.
-        - Configuration Audit is executed for POST.
-        - ConsistencyChecks is executed for that market.
-    - If no valid PRE/POST pair is found, a warning dialog is shown and no
-      processing is done.
-    """
-    module_name = "[Consistency Checks (Bulk Pre/Post Auto-Detection)]"
-    print(f"{module_name} Running Consistency Check (bulk mode)…")
+        # Auto-detect PRE/POST base runs and markets
+        base_pre, base_post, detected_market_pairs = detect_pre_post_subfolders(base_dir_fs, BLACKLIST=BLACKLIST)
+        market_pairs = detected_market_pairs or {}
 
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    versioned_suffix = f"{timestamp}_v{TOOL_VERSION}"
+        if not base_pre or not base_post:
+            msg_lines = [
+                "It was not possible to auto-detect a valid PRE/POST Step0 run",
+                "under the selected root folder:",
+                f"  {pretty_path(base_dir_fs)}",
+                "",
+                "Please run the manual Consistency Check (module 2) with explicit PRE and POST folders if needed.",
+            ]
+            msg = "\n".join(msg_lines)
+            print(f"{module_name} [WARNING] {msg}")
+            if messagebox is not None:
+                try:
+                    messagebox.showwarning("Could not auto-detect Pre/Post folders", msg)
+                except Exception:
+                    pass
+            return None
 
-    base_dir = (input_base_dir or "").strip()
-    if not base_dir:
-        msg = "A base folder is required for bulk Consistency Check."
-        print(f"{module_name} [WARNING] {msg}")
-        if messagebox is not None:
-            try:
-                messagebox.showwarning("Missing base folder", msg)
-            except Exception:
-                pass
-        return
+        # If for some reason no markets were detected, use a single GLOBAL pair
+        if not market_pairs:
+            market_pairs = {"GLOBAL": (base_pre, base_post)}
 
-    base_dir_fs = to_long_path(base_dir)
-    if not os.path.isdir(base_dir_fs):
-        msg = f"Base folder does not exist or is not a directory:\n'{pretty_path(base_dir_fs)}'"
-        print(f"{module_name} [WARNING] {msg}")
-        if messagebox is not None:
-            try:
-                messagebox.showwarning("Invalid base folder", msg)
-            except Exception:
-                pass
-        return
-
-    # Auto-detect PRE/POST base runs and markets
-    base_pre, base_post, detected_market_pairs = detect_pre_post_subfolders(base_dir_fs, BLACKLIST=BLACKLIST)
-    market_pairs: Dict[str, Tuple[str, str]] = detected_market_pairs or {}
-
-    if not base_pre or not base_post:
-        msg_lines = [
-            "It was not possible to auto-detect a valid PRE/POST Step0 run",
-            "under the selected root folder:",
-            f"  {pretty_path(base_dir_fs)}",
-            "",
-            "Please run the manual Consistency Check (module 2) with explicit PRE and POST folders if needed.",
-        ]
-        msg = "\n".join(msg_lines)
-        print(f"{module_name} [WARNING] {msg}")
-        if messagebox is not None:
-            try:
-                messagebox.showwarning("Could not auto-detect Pre/Post folders", msg)
-            except Exception:
-                pass
-        return
-
-    # If for some reason no markets were detected, use a single GLOBAL pair
-    if not market_pairs:
-        market_pairs = {"GLOBAL": (base_pre, base_post)}
-
-    # Build confirmation dialog listing all market pairs
-    lines: List[str] = []
-    lines.append("The following PRE/POST folders have been detected for Bulk Consistency Check:\n")
-    lines.append(f"  PRE  base run : {pretty_path(base_pre)} (auto-detected)")
-    lines.append(f"  POST base run : {pretty_path(base_post)} (auto-detected)")
-    lines.append("")
-    lines.append("One Consistency Check will be executed per market:\n")
-
-    for market, (pre_mkt, post_mkt) in sorted(market_pairs.items()):
-        lines.append(f"  Market: {market}")
-        lines.append(f"    PRE : {pretty_path(pre_mkt)}")
-        lines.append(f"    POST: {pretty_path(post_mkt)}")
+        # Build confirmation dialog listing all market pairs
+        lines: List[str] = []
+        lines.append("The following PRE/POST folders have been detected for Bulk Consistency Check:\n")
+        lines.append(f"  PRE  base run : {pretty_path(base_pre)} (auto-detected)")
+        lines.append(f"  POST base run : {pretty_path(base_post)} (auto-detected)")
         lines.append("")
+        lines.append("One Consistency Check will be executed per market:\n")
 
-    lines.append("Do you want to run Consistency Checks for all these markets?")
+        for market, (pre_mkt, post_mkt) in sorted(market_pairs.items()):
+            lines.append(f"  Market: {market}")
+            lines.append(f"    PRE : {pretty_path(pre_mkt)}")
+            lines.append(f"    POST: {pretty_path(post_mkt)}")
+            lines.append("")
 
-    if not ask_yes_no_dialog_custom("Detected Pre/Post folders", "\n".join(lines), default=True):
-        print(f"{module_name} User cancelled after Pre/Post auto-detection.")
+        lines.append("Do you want to run Consistency Checks for all these markets?")
+
+        if not ask_yes_no_dialog_custom("Detected Pre/Post folders", "\n".join(lines), default=True):
+            print(f"{module_name} User cancelled after Pre/Post auto-detection.")
+            return None
+
+        return market_pairs
+
+    def main_logic(market_pairs: Dict[str, Tuple[str, str]]) -> None:
+        # ----------------------------- SHARED PER-MARKET EXECUTION ----------------------------- #
+        for market_label, (pre_dir, post_dir) in sorted(market_pairs.items()):
+            market_tag = f"[Market: {market_label}]" if market_label != "GLOBAL" else ""
+            print(f"\n{module_name} Processing Market: {market_label}")
+            print("=" * 80)
+            print(f"{module_name} {market_tag} Processing PRE/POST pair:")
+            print(f"{module_name} {market_tag} PRE folder:  '{pretty_path(pre_dir)}'")
+            print(f"{module_name} {market_tag} POST folder: '{pretty_path(post_dir)}'")
+
+            pre_dir_fs = to_long_path(pre_dir)
+            post_dir_fs = to_long_path(post_dir)
+
+            # NEW: compute output_dir upfront so both audits and consistency outputs land together
+            if market_label != "GLOBAL":
+                output_dir = os.path.join(post_dir_fs, f"ConsistencyChecks_{versioned_suffix}_{market_label}")
+            else:
+                output_dir = os.path.join(post_dir_fs, f"ConsistencyChecks_{versioned_suffix}")
+            os.makedirs(output_dir, exist_ok=True)
+
+            # NEW: write FoldersCompared.txt with the exact PRE/POST folders used
+            try:
+                txt_path = write_compared_folders_file(output_dir=output_dir, pre_dir=pre_dir_fs, post_dir=post_dir_fs)
+                if txt_path:
+                    print(f"{module_name} {market_tag} Compared folders file written: '{pretty_path(txt_path)}'")
+            except Exception as ex:
+                print(f"{module_name} {market_tag} [WARN] Failed to write FoldersCompared.txt: {ex}")
+
+
+            # NEW: Build Pre/Post audit suffixes (Pre/Post before the timestamp)
+            audit_pre_suffix = f"Pre_{versioned_suffix}"
+            audit_post_suffix = f"Post_{versioned_suffix}"
+
+            # --- Run Configuration Audit for PRE and POST ---
+            print(f"{module_name} {market_tag} Running Configuration Audit for PRE folder before consistency checks...")
+            print("-" * 80)
+            pre_audit_excel = run_configuration_audit(
+                input_dir=pre_dir_fs,
+                ca_freq_filters_csv=ca_freq_filters_csv,
+                n77_ssb_pre=n77_ssb_pre,
+                n77_ssb_post=n77_ssb_post,
+                n77b_ssb=n77b_ssb,
+                allowed_n77_ssb_pre_csv=allowed_n77_ssb_pre_csv,
+                allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
+                allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
+                allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
+                versioned_suffix=audit_pre_suffix,
+                market_label=market_label,
+                external_output_dir=output_dir,
+            )
+            print("-" * 80)
+            if pre_audit_excel:
+                print(f"{module_name} {market_tag} PRE Configuration Audit output: '{pretty_path(pre_audit_excel)}'")
+            else:
+                print(f"{module_name} {market_tag} PRE Configuration Audit did not generate an output Excel file.")
+
+            print(f"{module_name} {market_tag} Running Configuration Audit for POST folder before consistency checks...")
+            print("-" * 80)
+            post_audit_excel = run_configuration_audit(
+                input_dir=post_dir_fs,
+                ca_freq_filters_csv=ca_freq_filters_csv,
+                n77_ssb_pre=n77_ssb_pre,
+                n77_ssb_post=n77_ssb_post,
+                n77b_ssb=n77b_ssb,
+                allowed_n77_ssb_pre_csv=allowed_n77_ssb_pre_csv,
+                allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
+                allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
+                allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
+                versioned_suffix=audit_post_suffix,
+                market_label=market_label,
+                external_output_dir=output_dir,
+            )
+            print("-" * 80)
+            if post_audit_excel:
+                print(f"{module_name} {market_tag} POST Configuration Audit output: '{pretty_path(post_audit_excel)}'")
+            else:
+                print(f"{module_name} {market_tag} POST Configuration Audit did not generate an output Excel file.")
+
+            # --- Run ConsistencyChecks for this market ---
+            try:
+                app = ConsistencyChecks(n77_ssb_pre=n77_ssb_pre, n77_ssb_post=n77_ssb_post, freq_filter_list=cc_filter_list)
+            except TypeError:
+                app = ConsistencyChecks(n77_ssb_pre=n77_ssb_pre, n77_ssb_post=n77_ssb_post)
+
+            loaded = False
+            try:
+                app.loadPrePost(pre_dir_fs, post_dir_fs)
+                loaded = True
+            except TypeError:
+                loaded = False
+
+            if not loaded:
+                print(f"{module_name} {market_tag} [ERROR] ConsistencyChecks class does not support dual folders (Pre/Post).")
+                print(f"{module_name} {market_tag}         Please update ConsistencyChecks.loadPrePost(pre_dir, post_dir) to enable dual-input mode.")
+                continue
+
+            results = None
+            if n77_ssb_pre and n77_ssb_post:
+                try:
+                    # Preferred new signature: (old_ssb, new_ssb, module_name, pre_audit_excel, post_audit_excel)
+                    results = app.comparePrePost(n77_ssb_pre, n77_ssb_post, module_name, pre_audit_excel, post_audit_excel)
+                except TypeError:
+                    try:
+                        # Fallback: older version that only knows post_audit_excel
+                        results = app.comparePrePost(n77_ssb_pre, n77_ssb_post, module_name, post_audit_excel)
+                    except TypeError:
+                        try:
+                            # Fallback: older version that only knows module_name
+                            results = app.comparePrePost(n77_ssb_pre, n77_ssb_post, module_name)
+                        except TypeError:
+                            # Legacy: only (old_ssb, new_ssb)
+                            results = app.comparePrePost(n77_ssb_pre, n77_ssb_post)
+            else:
+                print(f"{module_name} {market_tag} [INFO] Frequencies not provided. Comparison will be skipped; only tables will be saved.")
+
+            # output_dir is already the shared folder (audits + consistency outputs)
+            app.save_outputs_excel(output_dir, results, versioned_suffix=versioned_suffix)
+
+            print(f"\n{module_name} {market_tag} Outputs saved to: '{pretty_path(output_dir)}'")
+            if results:
+                print(f"{module_name} {market_tag} Wrote CellRelation.xlsx and ConsistencyChecks_CellRelation.xlsx (with Summary and details).")
+            else:
+                print(f"{module_name} {market_tag} Wrote CellRelation.xlsx (all tables). No comparison Excel because frequencies were not provided.")
+
+    market_pairs = run_consistency_check_bulk() if is_bulk else run_consistency_check_manual()
+    if not market_pairs:
         return
 
-    run_consistency_checks_for_market_pairs(
-        market_pairs=market_pairs,
-        n77_ssb_pre=n77_ssb_pre,
-        n77_ssb_post=n77_ssb_post,
-        n77b_ssb=n77b_ssb,
-        ca_freq_filters_csv=ca_freq_filters_csv,
-        cc_freq_filters_csv=cc_freq_filters_csv,
-        allowed_n77_ssb_pre_csv=allowed_n77_ssb_pre_csv,
-        allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
-        allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
-        allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
-        versioned_suffix=versioned_suffix,
-        module_name=module_name,
-    )
-
+    main_logic(market_pairs)
 
 def run_initial_cleanup(input_dir: str, *_args) -> None:
     module_name = "[Initial Clean-Up]"
@@ -1274,9 +1239,9 @@ def resolve_module_callable(name: str):
     if name in ("audit", MODULE_NAMES[0].lower(), "configuration-audit"):
         return run_configuration_audit
     if name in ("consistency-check", MODULE_NAMES[1].lower()):
-        return run_consistency_checks_manual
+        return run_consistency_checks
     if name in ("consistency-check-bulk", MODULE_NAMES[2].lower()):
-        return run_consistency_checks_bulk
+        return run_consistency_checks
     if name in ("initial-cleanup", MODULE_NAMES[3].lower()):
         return run_initial_cleanup
     if name in ("final-cleanup", MODULE_NAMES[4].lower(), "final-cleanup"):
@@ -1299,6 +1264,7 @@ def execute_module(
     allowed_n77_arfcn_pre_csv: str = "",
     allowed_n77_ssb_post_csv: str = "",
     allowed_n77_arfcn_post_csv: str = "",
+    selected_module: str = "",
 ) -> None:
     """
     Launch selected module with the proper signature (and measure execution time).
@@ -1314,37 +1280,22 @@ def execute_module(
     label = getattr(module_fn, "__name__", "module")
 
     try:
-        if module_fn in (run_consistency_checks_manual, run_consistency_checks_bulk):
-            if module_fn is run_consistency_checks_manual:
-                module_fn(
-                    input_pre_dir,
-                    input_post_dir,
-                    n77_ssb_pre,
-                    n77_ssb_post,
-                    n77b_ssb,
-                    ca_freq_filters_csv,
-                    cc_freq_filters_csv,
-                    allowed_n77_ssb_pre_csv,
-                    allowed_n77_arfcn_pre_csv,
-                    allowed_n77_ssb_post_csv,
-                    allowed_n77_arfcn_post_csv,
-                )
-            else:
-                # Bulk mode: use a single base folder so that PRE/POST can be auto-detected
-                base_dir = input_pre_dir or input_post_dir or input_dir
-                module_fn(
-                    base_dir,
-                    None,
-                    n77_ssb_pre,
-                    n77_ssb_post,
-                    n77b_ssb,
-                    ca_freq_filters_csv,
-                    cc_freq_filters_csv,
-                    allowed_n77_ssb_pre_csv,
-                    allowed_n77_arfcn_pre_csv,
-                    allowed_n77_ssb_post_csv,
-                    allowed_n77_arfcn_post_csv,
-                )
+        if module_fn is run_consistency_checks:
+            module_fn(
+                input_dir=input_dir,
+                input_pre_dir=input_pre_dir,
+                input_post_dir=input_post_dir,
+                n77_ssb_pre=n77_ssb_pre,
+                n77_ssb_post=n77_ssb_post,
+                n77b_ssb=n77b_ssb,
+                ca_freq_filters_csv=ca_freq_filters_csv,
+                cc_freq_filters_csv=cc_freq_filters_csv,
+                allowed_n77_ssb_pre_csv=allowed_n77_ssb_pre_csv,
+                allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
+                allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
+                allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
+                mode=selected_module,
+            )
 
         elif module_fn is run_configuration_audit:
             module_fn(
@@ -1482,7 +1433,7 @@ def main():
     default_input = default_input_audit
 
     default_n77_ssb_pre = args.n77_ssb_pre or persisted_n77_ssb_pre or DEFAULT_N77_SSB_PRE
-    default_n77_ssb_post = args.n77_ssb_post or persisted_n77_ssb_post or DEFAULT_N77_SSBQ_POST
+    default_n77_ssb_post = args.n77_ssb_post or persisted_n77_ssb_post or DEFAULT_N77_SSB_POST
     default_n77b_ssb = args.n77b_ssb or persisted_n77b_ssb or DEFAULT_N77B_SSB
 
     default_ca_filters_csv = normalize_csv_list(args.ca_freq_filters or persisted_ca_filters)
@@ -1615,6 +1566,7 @@ def main():
                     allowed_n77_arfcn_pre_csv=sel.allowed_n77_arfcn_pre_csv,
                     allowed_n77_ssb_post_csv=sel.allowed_n77_ssb_post_csv,
                     allowed_n77_arfcn_post_csv=sel.allowed_n77_arfcn_post_csv,
+                    selected_module=sel.module,
                 )
             except Exception as e:
                 log_module_exception(sel.module, e)
@@ -1644,91 +1596,6 @@ def main():
     allowed_n77_arfcn_pre_csv = default_allowed_n77_arfcn_pre_csv
     allowed_n77_ssb_post_csv = default_allowed_n77_ssb_post_csv
     allowed_n77_arfcn_post_csv = default_allowed_n77_arfcn_post_csv
-
-    # Manual Consistency Check (module 2)
-    if module_fn is run_consistency_checks_manual:
-        input_pre_dir = args.input_pre or default_input_cc_pre
-        input_post_dir = args.input_post or default_input_cc_post
-
-        if not input_pre_dir or not input_post_dir:
-            print("Error: --input-pre and --input-post are required for consistency-check manual in CLI mode.\n")
-            parser.print_help()
-            return
-
-        save_cfg_values(
-            config_dir=CONFIG_DIR,
-            config_path=CONFIG_PATH,
-            config_section=CONFIG_SECTION,
-            cfg_field_map=CFG_FIELD_MAP,
-            last_input_cc_pre=input_pre_dir,
-            last_input_cc_post=input_post_dir,
-            n77_ssb_pre=n77_ssb_pre,
-            n77_ssb_post=n77_ssb_post,
-            n77b_ssb=n77b_ssb,
-            ca_freq_filters=ca_freq_filters_csv,
-            cc_freq_filters=cc_freq_filters_csv,
-            allowed_n77_ssb_pre=allowed_n77_ssb_pre_csv,
-            allowed_n77_arfcn_pre=allowed_n77_arfcn_pre_csv,
-            allowed_n77_ssb_post=allowed_n77_ssb_post_csv,
-            allowed_n77_arfcn_post=allowed_n77_arfcn_post_csv,
-        )
-
-        execute_module(
-            module_fn,
-            input_pre_dir=input_pre_dir,
-            input_post_dir=input_post_dir,
-            n77_ssb_pre=n77_ssb_pre,
-            n77_ssb_post=n77_ssb_post,
-            n77b_ssb=n77b_ssb,
-            ca_freq_filters_csv=ca_freq_filters_csv,
-            cc_freq_filters_csv=cc_freq_filters_csv,
-            allowed_n77_ssb_pre_csv=allowed_n77_ssb_pre_csv,
-            allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
-            allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
-            allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
-        )
-        return
-
-    # Bulk Consistency Check (module 3)
-    if module_fn is run_consistency_checks_bulk:
-        input_dir = args.input or default_input_cc_bulk
-        if not input_dir:
-            print("Error: --input is required for consistency-check-bulk in CLI mode.\n")
-            parser.print_help()
-            return
-
-        save_cfg_values(
-            config_dir=CONFIG_DIR,
-            config_path=CONFIG_PATH,
-            config_section=CONFIG_SECTION,
-            cfg_field_map=CFG_FIELD_MAP,
-            last_input_cc_bulk=input_dir,
-            last_input=input_dir,
-            n77_ssb_pre=n77_ssb_pre,
-            n77_ssb_post=n77_ssb_post,
-            n77b_ssb=n77b_ssb,
-            ca_freq_filters=ca_freq_filters_csv,
-            cc_freq_filters=cc_freq_filters_csv,
-            allowed_n77_ssb_pre=allowed_n77_ssb_pre_csv,
-            allowed_n77_arfcn_pre=allowed_n77_arfcn_pre_csv,
-            allowed_n77_ssb_post=allowed_n77_ssb_post_csv,
-            allowed_n77_arfcn_post=allowed_n77_arfcn_post_csv,
-        )
-
-        execute_module(
-            module_fn,
-            input_dir=input_dir,
-            n77_ssb_pre=n77_ssb_pre,
-            n77_ssb_post=n77_ssb_post,
-            n77b_ssb=n77b_ssb,
-            ca_freq_filters_csv=ca_freq_filters_csv,
-            cc_freq_filters_csv=cc_freq_filters_csv,
-            allowed_n77_ssb_pre_csv=allowed_n77_ssb_pre_csv,
-            allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
-            allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
-            allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
-        )
-        return
 
     # Configuration Audit (module 1)
     if module_fn is run_configuration_audit:
@@ -1768,6 +1635,94 @@ def main():
             allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
             allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
             allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
+            selected_module=args.module,
+        )
+        return
+
+    # Manual Consistency Check (module 2)
+    if args.module == "consistency-check":
+        input_pre_dir = args.input_pre or default_input_cc_pre
+        input_post_dir = args.input_post or default_input_cc_post
+
+        if not input_pre_dir or not input_post_dir:
+            print("Error: --input-pre and --input-post are required for consistency-check manual in CLI mode.\n")
+            parser.print_help()
+            return
+
+        save_cfg_values(
+            config_dir=CONFIG_DIR,
+            config_path=CONFIG_PATH,
+            config_section=CONFIG_SECTION,
+            cfg_field_map=CFG_FIELD_MAP,
+            last_input_cc_pre=input_pre_dir,
+            last_input_cc_post=input_post_dir,
+            n77_ssb_pre=n77_ssb_pre,
+            n77_ssb_post=n77_ssb_post,
+            n77b_ssb=n77b_ssb,
+            ca_freq_filters=ca_freq_filters_csv,
+            cc_freq_filters=cc_freq_filters_csv,
+            allowed_n77_ssb_pre=allowed_n77_ssb_pre_csv,
+            allowed_n77_arfcn_pre=allowed_n77_arfcn_pre_csv,
+            allowed_n77_ssb_post=allowed_n77_ssb_post_csv,
+            allowed_n77_arfcn_post=allowed_n77_arfcn_post_csv,
+        )
+
+        execute_module(
+            module_fn,
+            input_pre_dir=input_pre_dir,
+            input_post_dir=input_post_dir,
+            n77_ssb_pre=n77_ssb_pre,
+            n77_ssb_post=n77_ssb_post,
+            n77b_ssb=n77b_ssb,
+            ca_freq_filters_csv=ca_freq_filters_csv,
+            cc_freq_filters_csv=cc_freq_filters_csv,
+            allowed_n77_ssb_pre_csv=allowed_n77_ssb_pre_csv,
+            allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
+            allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
+            allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
+            selected_module=args.module,
+        )
+        return
+
+    # Bulk Consistency Check (module 3)
+    if args.module == "consistency-check-bulk":
+        input_dir = args.input or default_input_cc_bulk
+        if not input_dir:
+            print("Error: --input is required for consistency-check-bulk in CLI mode.\n")
+            parser.print_help()
+            return
+
+        save_cfg_values(
+            config_dir=CONFIG_DIR,
+            config_path=CONFIG_PATH,
+            config_section=CONFIG_SECTION,
+            cfg_field_map=CFG_FIELD_MAP,
+            last_input_cc_bulk=input_dir,
+            last_input=input_dir,
+            n77_ssb_pre=n77_ssb_pre,
+            n77_ssb_post=n77_ssb_post,
+            n77b_ssb=n77b_ssb,
+            ca_freq_filters=ca_freq_filters_csv,
+            cc_freq_filters=cc_freq_filters_csv,
+            allowed_n77_ssb_pre=allowed_n77_ssb_pre_csv,
+            allowed_n77_arfcn_pre=allowed_n77_arfcn_pre_csv,
+            allowed_n77_ssb_post=allowed_n77_ssb_post_csv,
+            allowed_n77_arfcn_post=allowed_n77_arfcn_post_csv,
+        )
+
+        execute_module(
+            module_fn,
+            input_dir=input_dir,
+            n77_ssb_pre=n77_ssb_pre,
+            n77_ssb_post=n77_ssb_post,
+            n77b_ssb=n77b_ssb,
+            ca_freq_filters_csv=ca_freq_filters_csv,
+            cc_freq_filters_csv=cc_freq_filters_csv,
+            allowed_n77_ssb_pre_csv=allowed_n77_ssb_pre_csv,
+            allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
+            allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
+            allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
+            selected_module=args.module,
         )
         return
 
@@ -1827,6 +1782,7 @@ def main():
         allowed_n77_arfcn_pre_csv=allowed_n77_arfcn_pre_csv,
         allowed_n77_ssb_post_csv=allowed_n77_ssb_post_csv,
         allowed_n77_arfcn_post_csv=allowed_n77_arfcn_post_csv,
+        selected_module=args.module,
     )
 
 
