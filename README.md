@@ -184,7 +184,7 @@ This tool can be executed either with **GUI mode** (default when no arguments ar
 ```bash
 RetuningAutomations.exe/bin --module <module-name> [options]
 
---module                     Module to run: configuration-audit | consistency-check | initial-cleanup | final-cleanup
+--module                     Module to run: configuration-audit | consistency-check | profiles-audit | final-cleanup
 --input                      Input folder to process (single-input modules)
 --input-pre                  PRE input folder (only for consistency-check)
 --input-post                 POST input folder (only for consistency-check)
@@ -216,14 +216,14 @@ If `--module` is omitted and **no other arguments** are provided, the GUI will l
 | `configuration-audit`    | Runs the Configuration Audit module (single input folder).          |
 | `consistency-check`      | Runs the Pre/Post Relations Consistency Check (dual input folders). |
 | `consistency-check-bulk` | Runs the Pre/Post Relations Consistency Check (bulk mode).          |
-| `initial-cleanup`        | Runs the Initial Clean-Up module (single input folder).             |
+| `profiles-audit`         | Runs the Profiles Audit module (single input folder).               |
 | `final-cleanup`          | Runs the Final Clean-Up module (single input folder).               |
 
 ---
 
 ### 📂 Input Options
 
-#### Single-Input Modules (`configuration-audit`, 'consistency-check-bulk', `initial-cleanup`, `final-cleanup`)
+#### Single-Input Modules (`configuration-audit`, `consistency-check-bulk`, `profiles-audit`, `final-cleanup`)
 
 ```
 --input <folder>

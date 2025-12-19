@@ -43,7 +43,7 @@ from src.modules.CleanUp.FinalCleanUp import FinalCleanUp
 # ================================ VERSIONING ================================ #
 
 TOOL_NAME           = "RetuningAutomations"
-TOOL_VERSION        = "0.4.3"
+TOOL_VERSION        = "0.5.0"
 TOOL_DATE           = "2025-12-19"
 TOOL_NAME_VERSION   = f"{TOOL_NAME}_v{TOOL_VERSION}"
 COPYRIGHT_TEXT      = "(c) 2025 - Jaime Tur (jaime.tur@ericsson.com)"
@@ -95,7 +95,7 @@ MODULE_NAMES = [
     "1. Configuration Audit & Logs Parser",
     "2. Consistency Check (Pre/Post Comparison)",
     "3. Consistency Check (Bulk mode Pre/Post auto-detection)",
-    "4. Initial Clean-Up (During Maintenance Window)",
+    "4. Profiles Audit (During Maintenance Window)",
     "5. Final Clean-Up (After Retune is completed)",
 ]
 
@@ -552,8 +552,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Launcher Retuning Automations Tool with GUI fallback.")
     parser.add_argument(
         "--module",
-        choices=["configuration-audit", "consistency-check", "consistency-check-bulk", "initial-cleanup", "final-cleanup"],
-        help="Module to run: configuration-audit|consistency-check|consistency-check-bulk|initial-cleanup|final-cleanup. "
+        choices=["configuration-audit", "consistency-check", "consistency-check-bulk", "profiles-audit", "final-cleanup"],
+        help="Module to run: configuration-audit|consistency-check|consistency-check-bulk|profiles-audit|final-cleanup. "
              "If omitted and no other args are provided, GUI appears (if available)."
     )
     # Single-input (most modules)
@@ -1196,11 +1196,11 @@ def run_consistency_checks(
 
     main_logic(market_pairs)
 
-def run_initial_cleanup(input_dir: str, *_args) -> None:
-    module_name = "[Initial Clean-Up]"
+def run_profiles_audit(input_dir: str, *_args) -> None:
+    module_name = "[Profiles Audit]"
     input_dir_fs = to_long_path(input_dir) if input_dir else input_dir
 
-    print(f"{module_name} Running Initial Clean-up…")
+    print(f"{module_name} Running Profiles Audit…")
     print(f"{module_name} Input folder: '{pretty_path(input_dir_fs)}'")
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -1242,8 +1242,8 @@ def resolve_module_callable(name: str):
         return run_consistency_checks
     if name in ("consistency-check-bulk", MODULE_NAMES[2].lower()):
         return run_consistency_checks
-    if name in ("initial-cleanup", MODULE_NAMES[3].lower()):
-        return run_initial_cleanup
+    if name in ("profiles-audit", MODULE_NAMES[3].lower()):
+        return run_profiles_audit
     if name in ("final-cleanup", MODULE_NAMES[4].lower(), "final-cleanup"):
         return run_final_cleanup
     return None
@@ -1310,7 +1310,7 @@ def execute_module(
                 n77b_ssb=n77b_ssb,
             )
 
-        elif module_fn is run_initial_cleanup:
+        elif module_fn is run_profiles_audit:
             module_fn(input_dir, n77_ssb_pre, n77_ssb_post)
 
         elif module_fn is run_final_cleanup:
@@ -1727,13 +1727,13 @@ def main():
         return
 
     # Initial Clean-Up (module 4) and Final Clean-Up (module 5): single-input
-    input_dir = args.input or (default_input_initial_cleanup if module_fn is run_initial_cleanup else default_input_final_cleanup)
+    input_dir = args.input or (default_input_initial_cleanup if module_fn is run_profiles_audit else default_input_final_cleanup)
     if not input_dir:
         print("Error: --input is required for this module in CLI mode.\n")
         parser.print_help()
         return
 
-    if module_fn is run_initial_cleanup:
+    if module_fn is run_profiles_audit:
         save_cfg_values(
             config_dir=CONFIG_DIR,
             config_path=CONFIG_PATH,
