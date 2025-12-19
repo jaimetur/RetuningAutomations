@@ -505,7 +505,7 @@ def write_compared_folders_file(output_dir: str, pre_dir: str, post_dir: str, fi
     Write a small text file with the PRE/POST folders used for the comparison.
 
     File format (2 lines):
-      Folder-Pre: <absolute path>
+      Folder-Pre : <absolute path>
       Folder-Post: <absolute path>
 
     Returns the full path to the created file, or None if output_dir is missing.
@@ -521,7 +521,7 @@ def write_compared_folders_file(output_dir: str, pre_dir: str, post_dir: str, fi
 
     out_path = os.path.join(output_dir_fs, filename)
     with open(out_path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(f"Folder-Pre: {pre_path}\n")
+        f.write(f"Folder-Pre : {pre_path}\n")
         f.write(f"Folder-Post: {post_path}\n")
 
     return out_path
