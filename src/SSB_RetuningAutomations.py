@@ -41,7 +41,7 @@ from src.modules.CleanUp.FinalCleanUp import FinalCleanUp
 
 # ================================ VERSIONING ================================ #
 
-TOOL_NAME           = "SSB-RetuningAutomations"
+TOOL_NAME           = "SSB_RetuningAutomations"
 TOOL_VERSION        = "0.5.0"
 TOOL_DATE           = "2025-12-19"
 TOOL_NAME_VERSION   = f"{TOOL_NAME}_v{TOOL_VERSION}"
