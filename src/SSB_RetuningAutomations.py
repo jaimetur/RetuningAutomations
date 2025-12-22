@@ -598,7 +598,8 @@ def run_configuration_audit(
     versioned_suffix: Optional[str] = None,
     market_label: Optional[str] = None,
     external_output_dir: Optional[str] = None,
-    profiles_audit: bool = False,                 # <<< NEW
+    profiles_audit: bool = True,                 # <<< NEW
+    # profiles_audit: bool = False,                 # <<< NEW
     module_name_override: Optional[str] = None,    # <<< NEW
 ) -> Optional[str]:
     """
@@ -729,7 +730,8 @@ def run_configuration_audit(
         if external_output_dir:
             output_dir = to_long_path(external_output_dir)
         else:
-            folder_prefix = "ProfilesAudit" if profiles_audit else "ConfigurationAudit"
+            # folder_prefix = "ProfilesAudit" if profiles_audit else "ConfigurationAudit"
+            folder_prefix = "ConfigurationAudit"  # keep output naming stable even when profiles_audit=True
             output_dir = os.path.join(folder_fs, f"{folder_prefix}_{versioned_suffix}{suffix}")
 
         os.makedirs(output_dir, exist_ok=True)
