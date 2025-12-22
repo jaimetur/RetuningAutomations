@@ -88,8 +88,8 @@ def generate_ppt_summary(
         print(f"{module_name} [INFO] python-pptx is not installed. Skipping PPT summary.")
         return None
 
-    MAIN_BULLET_SIZE = Pt(11)
-    SUB_BULLET_SIZE = Pt(10)
+    MAIN_BULLET_SIZE = Pt(10)
+    SUB_BULLET_SIZE = Pt(9)
 
     sections = build_text_summary_structure(summary_audit_df)
 

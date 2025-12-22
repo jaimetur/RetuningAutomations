@@ -2,6 +2,7 @@
 import pandas as pd
 
 from src.utils.utils_frequency import resolve_column_case_insensitive, parse_int_frequency, is_n77_from_string
+from src.utils.utils_parsing import build_expected_profile_ref_clone
 
 
 # ----------------------------- NRCellDU (N77 detection + allowed SSB + LowMidBand/mmWave) -----------------------------
@@ -257,6 +258,50 @@ def process_nr_freq_rel(df_nr_freq_rel, is_old, add_row, n77_ssb_pre, is_new, n7
                         add_row("NRFreqRelation", "NR Frequency Audit", f"NR cells with the old N77 SSB ({n77_ssb_pre}) and the new SSB ({n77_ssb_post}) (from NRFreqRelation table)", len(cells_both), ", ".join(cells_both))
                         add_row("NRFreqRelation", "NR Frequency Audit", f"NR cells with the old N77 SSB ({n77_ssb_pre}) but without new N77 SSB ({n77_ssb_post}) (from NRFreqRelation table)", len(cells_old_without_new), ", ".join(cells_old_without_new))
 
+                        # ----------------------------- NEW: mcpcPCellNrFreqRelProfileRef clone checks (OLD SSB -> NEW SSB) -----------------------------
+                        profile_col = resolve_column_case_insensitive(full_n77, ["mcpcPCellNrFreqRelProfileRef"])
+                        if profile_col:
+                            nodes_pointing_to_same_profile_ref = set()
+                            nodes_pointing_to_clone_profile_ref = set()
+
+                            def _collect_unique_refs(df_block):
+                                vals = df_block[profile_col].dropna().astype(str).map(lambda x: x.strip()).tolist()
+                                vals = [v for v in vals if v]
+                                return sorted(set(vals))
+
+                            # Compare OLD vs NEW by NodeId + NRCellCUId (NRCellRelationId is not expected to match)
+                            group_cols = [node_col, cell_col]
+                            for (node_id_val, cell_id_val), grp in full_n77.groupby(group_cols, dropna=False):
+                                old_rows = grp.loc[grp["_arfcn_int_"] == n77_ssb_pre]
+                                new_rows = grp.loc[grp["_arfcn_int_"] == n77_ssb_post]
+                                if old_rows.empty or new_rows.empty:
+                                    continue
+
+                                old_refs = _collect_unique_refs(old_rows)
+                                new_refs = _collect_unique_refs(new_rows)
+                                if not old_refs or not new_refs:
+                                    continue
+
+                                node_id_val = str(node_id_val)
+                                same_found = any(new_ref == old_ref for old_ref in old_refs for new_ref in new_refs)
+                                clone_found = any(new_ref == build_expected_profile_ref_clone(old_ref, n77_ssb_pre, n77_ssb_post) for old_ref in old_refs for new_ref in new_refs)
+
+                                if same_found:
+                                    nodes_pointing_to_same_profile_ref.add(node_id_val)
+                                if clone_found:
+                                    nodes_pointing_to_clone_profile_ref.add(node_id_val)
+
+                            nodes_pointing_to_same_profile_ref = sorted(set(nodes_pointing_to_same_profile_ref))
+                            nodes_pointing_to_clone_profile_ref = sorted(set(nodes_pointing_to_clone_profile_ref))
+
+                            add_row("NRFreqRelation", "NR Frequency Inconsistencies", f"NR nodes with the old N77 SSB ({n77_ssb_pre}) and the new SSB ({n77_ssb_post}) pointing to some mcpcPCellNrFreqRelProfileRef (from NRFreqRelation table)", len(nodes_pointing_to_same_profile_ref), ", ".join(nodes_pointing_to_same_profile_ref))
+                            add_row("NRFreqRelation", "NR Frequency Inconsistencies", f"NR nodes with the old N77 SSB ({n77_ssb_pre}) and the new SSB ({n77_ssb_post}) pointing to clone mcpcPCellNrFreqRelProfileRef (from NRFreqRelation table)", len(nodes_pointing_to_clone_profile_ref), ", ".join(nodes_pointing_to_clone_profile_ref))
+                            add_row("NRFreqRelation", "Profiles Inconsistencies", f"NR nodes with the old N77 SSB ({n77_ssb_pre}) and the new SSB ({n77_ssb_post}) pointing to some mcpcPCellNrFreqRelProfileRef (from NRFreqRelation table)", len(nodes_pointing_to_same_profile_ref), ", ".join(nodes_pointing_to_same_profile_ref))
+                            add_row("NRFreqRelation", "Profiles Inconsistencies", f"NR nodes with the old N77 SSB ({n77_ssb_pre}) and the new SSB ({n77_ssb_post}) pointing to clone mcpcPCellNrFreqRelProfileRef (from NRFreqRelation table)", len(nodes_pointing_to_clone_profile_ref), ", ".join(nodes_pointing_to_clone_profile_ref))
+                        else:
+                            add_row("NRFreqRelation", "NR Frequency Inconsistencies", "NRFreqRelation mcpcPCellNrFreqRelProfileRef clone check skipped (mcpcPCellNrFreqRelProfileRef missing)", "N/A")
+                            add_row("NRFreqRelation", "Profiles Inconsistencies", "NRFreqRelation mcpcPCellNrFreqRelProfileRef clone check skipped (mcpcPCellNrFreqRelProfileRef missing)", "N/A")
+
                         # Parameter equality check (ignoring ID/reference columns and helper columns)
                         cols_to_ignore = {arfcn_col, "_arfcn_int_"}
                         for name in full_n77.columns:
@@ -386,67 +431,6 @@ def process_nr_freq_rel(df_nr_freq_rel, is_old, add_row, n77_ssb_pre, is_new, n7
             add_row("NRFreqRelation", "NR Frequency Audit", "NRFreqRelation table", "Table not found or empty")
     except Exception as ex:
         add_row("NRFreqRelation", "NR Frequency Audit", "Error while checking NRFreqRelation", f"ERROR: {ex}")
-
-
-# ----------------------------- NRSectorCarrier (N77 + allowed ARCFN) -----------------------------
-def process_nr_sector_carrier(df_nr_sector_carrier, add_row, allowed_n77_arfcn_pre_set, all_n77_arfcn_in_pre, allowed_n77_arfcn_post_set, all_n77_arfcn_in_post):
-    try:
-        if df_nr_sector_carrier is not None and not df_nr_sector_carrier.empty:
-            node_col = resolve_column_case_insensitive(df_nr_sector_carrier, ["NodeId"])
-            arfcn_col = resolve_column_case_insensitive(df_nr_sector_carrier, ["arfcnDL"])
-
-            if node_col and arfcn_col:
-                work = df_nr_sector_carrier[[node_col, arfcn_col]].copy()
-                work[node_col] = work[node_col].astype(str).str.strip()
-
-                # N77 nodes = those having at least one ARCFN in N77 band (646600-660000)
-                mask_n77 = work[arfcn_col].map(is_n77_from_string)
-                n77_rows = work.loc[mask_n77].copy()
-
-                # NR Frequency Audit: NR nodes with ARCFN in N77 band (646600-660000) (from NRSectorCarrier table)
-                n77_nodes = sorted(n77_rows[node_col].astype(str).unique())
-                add_row("NRSectorCarrier", "NR Frequency Audit", "NR nodes with N77 ARCFN in band (646600-660000) (from NRSectorCarrier table)", len(n77_nodes), ", ".join(n77_nodes))
-
-                # NR nodes whose ALL N77 ARCFNs are in Pre-Retune allowed list (from NRSectorCarrier table)
-                if allowed_n77_arfcn_pre_set:
-                    grouped_n77 = n77_rows.groupby(node_col)[arfcn_col]
-                    pre_nodes = sorted(str(node) for node, series in grouped_n77 if all_n77_arfcn_in_pre(series))
-                    allowed_pre_str = ", ".join(str(v) for v in sorted(allowed_n77_arfcn_pre_set))
-                    add_row("NRSectorCarrier", "NR Frequency Audit", f"NR nodes with N77 ARCFN in Pre-Retune allowed list ({allowed_pre_str}) (from NRSectorCarrier table)", len(pre_nodes), ", ".join(pre_nodes))
-
-                # NR nodes whose ALL N77 ARCFNs are in Post-Retune allowed list (from NRSectorCarrier table)
-                if allowed_n77_arfcn_post_set:
-                    grouped_n77 = n77_rows.groupby(node_col)[arfcn_col]
-                    post_nodes = sorted(str(node) for node, series in grouped_n77 if all_n77_arfcn_in_post(series))
-                    allowed_post_str = ", ".join(str(v) for v in sorted(allowed_n77_arfcn_post_set))
-                    add_row("NRSectorCarrier", "NR Frequency Audit", f"NR nodes with N77 ARCFN in Post-Retune allowed list ({allowed_post_str}) (from NRSectorCarrier table)", len(post_nodes), ", ".join(post_nodes))
-
-                # NR Frequency Inconsistencies: NR ARCFN not in pre nor post allowed lists
-                if allowed_n77_arfcn_pre_set or allowed_n77_arfcn_post_set:
-                    allowed_union = set(allowed_n77_arfcn_pre_set) | set(allowed_n77_arfcn_post_set)
-
-                    def _is_not_in_union(v: object) -> bool:
-                        freq = parse_int_frequency(v)
-                        return freq is not None and freq not in allowed_union
-
-                    bad_rows = n77_rows.loc[n77_rows[arfcn_col].map(_is_not_in_union)]
-
-                    # Unique nodes with at least one ARCFN not in pre/post allowed lists
-                    bad_nodes = sorted(bad_rows[node_col].astype(str).unique())
-
-                    # Build a unique (NodeId, ARCFN) list to avoid duplicated lines in ExtraInfo
-                    unique_pairs = sorted({(str(r[node_col]).strip(), str(r[arfcn_col]).strip()) for _, r in bad_rows.iterrows()})
-                    extra = "; ".join(f"{node}: {arfcn}" for node, arfcn in unique_pairs)
-
-                    add_row("NRSectorCarrier", "NR Frequency Inconsistencies", "NR nodes with N77 ARCFN not in Pre/Post Retune allowed lists (from NRSectorCarrier table)", len(bad_nodes), extra)
-                else:
-                    add_row("NRSectorCarrier", "NR Frequency Inconsistencies", "NR nodes with N77 ARCFN not in Pre/Post Retune allowed lists (no pre/post allowed lists configured) (from NRSectorCarrier table)", "N/A")
-            else:
-                add_row("NRSectorCarrier", "NR Frequency Audit", "NRSectorCarrier table present but required columns missing", "N/A")
-        else:
-            add_row("NRSectorCarrier", "NR Frequency Audit", "NRSectorCarrier table", "Table not found or empty")
-    except Exception as ex:
-        add_row("NRSectorCarrier", "NR Frequency Audit", "Error while checking NRSectorCarrier", f"ERROR: {ex}")
 
 
 # ------------------------------------- NRCellRelations --------------------------------------------

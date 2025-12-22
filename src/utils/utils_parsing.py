@@ -349,3 +349,19 @@ def parse_arfcn_csv_to_set(
     return set(values)
 
 
+def build_expected_profile_ref_clone(old_profile_ref: object, old_ssb: int, new_ssb: int) -> str:
+    """
+    Build the expected clone profile reference by replacing the OLD SSB integer with the NEW SSB integer
+    only when it appears as a standalone number (not part of a longer digit sequence).
+
+    Example:
+      McpcPCellNrFreqRelProfile=430090_648672 -> McpcPCellNrFreqRelProfile=430090_647328
+    """
+    if old_profile_ref is None:
+        return ""
+
+    s = str(old_profile_ref).strip()
+    if not s:
+        return ""
+
+    return re.sub(rf"(?<!\d){int(old_ssb)}(?!\d)", str(int(new_ssb)), s)
