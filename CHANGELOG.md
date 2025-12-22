@@ -5,7 +5,7 @@
 ---
 
 ## Release: v0.5.0
-- ### Release Date: 2025-12-19
+- ### Release Date: 2025-12-22
 
 - ### Main Changes:
   
