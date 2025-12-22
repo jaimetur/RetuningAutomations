@@ -341,6 +341,11 @@ class ConfigurationAudit:
             "GUtranCellRelation": [],
             "FreqPrioNR": [],
             "EndcDistrProfile": [],
+
+            # Consistency Checks Post Step2
+            "NRCellCU": [],
+            "EUtranFreqRelation": [],
+
             "ExternalNRCellCU": [],
             "ExternalGUtranCell": [],
             "TermPointToGNodeB": [],
@@ -451,6 +456,10 @@ class ConfigurationAudit:
         df_term_point_to_gnb = concat_or_empty(mo_collectors["TermPointToGNB"])
         df_term_point_to_enodeb = concat_or_empty(mo_collectors["TermPointToENodeB"])
 
+        # Extra tables for Consistency Checks Post Step2
+        df_nr_cell_cu = concat_or_empty(mo_collectors["NRCellCU"])
+        df_eutran_freq_rel = concat_or_empty(mo_collectors["EUtranFreqRelation"])
+
         # <<< NEW: Build profiles tables dict (only used when profiles_audit=True) >>>
         profile_table_names = [
             "McpcPCellNrFreqRelProfileUeCfg",
@@ -485,6 +494,8 @@ class ConfigurationAudit:
             df_gu_cell_rel=df_gu_cell_rel,
             df_nr_sector_carrier=df_nr_sector_carrier,
             df_endc_distr_profile=df_endc_distr_profile,
+            df_nr_cell_cu=df_nr_cell_cu,
+            df_eutran_freq_rel=df_eutran_freq_rel,
             n77_ssb_pre=self.N77_SSB_PRE,
             n77_ssb_post=self.N77_SSB_POST,
             n77b_ssb=self.N77B_SSB,

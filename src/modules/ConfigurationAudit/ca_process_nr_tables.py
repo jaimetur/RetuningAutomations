@@ -2,6 +2,7 @@
 import pandas as pd
 
 from src.utils.utils_frequency import resolve_column_case_insensitive, parse_int_frequency, is_n77_from_string
+from src.utils.utils_parsing import build_expected_profile_ref_clone
 
 
 # ----------------------------- NRCellDU (N77 detection + allowed SSB + LowMidBand/mmWave) -----------------------------
@@ -256,6 +257,50 @@ def process_nr_freq_rel(df_nr_freq_rel, is_old, add_row, n77_ssb_pre, is_new, n7
 
                         add_row("NRFreqRelation", "NR Frequency Audit", f"NR cells with the old N77 SSB ({n77_ssb_pre}) and the new SSB ({n77_ssb_post}) (from NRFreqRelation table)", len(cells_both), ", ".join(cells_both))
                         add_row("NRFreqRelation", "NR Frequency Audit", f"NR cells with the old N77 SSB ({n77_ssb_pre}) but without new N77 SSB ({n77_ssb_post}) (from NRFreqRelation table)", len(cells_old_without_new), ", ".join(cells_old_without_new))
+
+                        # ----------------------------- NEW: mcpcPCellNrFreqRelProfileRef clone checks (OLD SSB -> NEW SSB) -----------------------------
+                        profile_col = resolve_column_case_insensitive(full_n77, ["mcpcPCellNrFreqRelProfileRef"])
+                        if profile_col:
+                            nodes_pointing_to_same_profile_ref = set()
+                            nodes_pointing_to_clone_profile_ref = set()
+
+                            def _collect_unique_refs(df_block):
+                                vals = df_block[profile_col].dropna().astype(str).map(lambda x: x.strip()).tolist()
+                                vals = [v for v in vals if v]
+                                return sorted(set(vals))
+
+                            # Compare OLD vs NEW by NodeId + NRCellCUId (NRCellRelationId is not expected to match)
+                            group_cols = [node_col, cell_col]
+                            for (node_id_val, cell_id_val), grp in full_n77.groupby(group_cols, dropna=False):
+                                old_rows = grp.loc[grp["_arfcn_int_"] == n77_ssb_pre]
+                                new_rows = grp.loc[grp["_arfcn_int_"] == n77_ssb_post]
+                                if old_rows.empty or new_rows.empty:
+                                    continue
+
+                                old_refs = _collect_unique_refs(old_rows)
+                                new_refs = _collect_unique_refs(new_rows)
+                                if not old_refs or not new_refs:
+                                    continue
+
+                                node_id_val = str(node_id_val)
+                                same_found = any(new_ref == old_ref for old_ref in old_refs for new_ref in new_refs)
+                                clone_found = any(new_ref == build_expected_profile_ref_clone(old_ref, n77_ssb_pre, n77_ssb_post) for old_ref in old_refs for new_ref in new_refs)
+
+                                if same_found:
+                                    nodes_pointing_to_same_profile_ref.add(node_id_val)
+                                if clone_found:
+                                    nodes_pointing_to_clone_profile_ref.add(node_id_val)
+
+                            nodes_pointing_to_same_profile_ref = sorted(set(nodes_pointing_to_same_profile_ref))
+                            nodes_pointing_to_clone_profile_ref = sorted(set(nodes_pointing_to_clone_profile_ref))
+
+                            add_row("NRFreqRelation", "NR Frequency Inconsistencies", f"NR nodes with the old N77 SSB ({n77_ssb_pre}) and the new SSB ({n77_ssb_post}) pointing to some mcpcPCellNrFreqRelProfileRef (from NRFreqRelation table)", len(nodes_pointing_to_same_profile_ref), ", ".join(nodes_pointing_to_same_profile_ref))
+                            add_row("NRFreqRelation", "NR Frequency Inconsistencies", f"NR nodes with the old N77 SSB ({n77_ssb_pre}) and the new SSB ({n77_ssb_post}) pointing to clone mcpcPCellNrFreqRelProfileRef (from NRFreqRelation table)", len(nodes_pointing_to_clone_profile_ref), ", ".join(nodes_pointing_to_clone_profile_ref))
+                            add_row("NRFreqRelation", "Profiles Inconsistencies", f"NR nodes with the old N77 SSB ({n77_ssb_pre}) and the new SSB ({n77_ssb_post}) pointing to some mcpcPCellNrFreqRelProfileRef (from NRFreqRelation table)", len(nodes_pointing_to_same_profile_ref), ", ".join(nodes_pointing_to_same_profile_ref))
+                            add_row("NRFreqRelation", "Profiles Inconsistencies", f"NR nodes with the old N77 SSB ({n77_ssb_pre}) and the new SSB ({n77_ssb_post}) pointing to clone mcpcPCellNrFreqRelProfileRef (from NRFreqRelation table)", len(nodes_pointing_to_clone_profile_ref), ", ".join(nodes_pointing_to_clone_profile_ref))
+                        else:
+                            add_row("NRFreqRelation", "NR Frequency Inconsistencies", "NRFreqRelation mcpcPCellNrFreqRelProfileRef clone check skipped (mcpcPCellNrFreqRelProfileRef missing)", "N/A")
+                            add_row("NRFreqRelation", "Profiles Inconsistencies", "NRFreqRelation mcpcPCellNrFreqRelProfileRef clone check skipped (mcpcPCellNrFreqRelProfileRef missing)", "N/A")
 
                         # Parameter equality check (ignoring ID/reference columns and helper columns)
                         cols_to_ignore = {arfcn_col, "_arfcn_int_"}

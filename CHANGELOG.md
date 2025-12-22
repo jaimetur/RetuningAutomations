@@ -16,6 +16,14 @@
   - #### 🌟 New Features:
     - Include `Profiles Inconsistencies` to `Configuration Audit` module (in SummaryAudit table) when it is executed from module `4. Profiles Audit` module.
     - Include `Profiles Discrepancies` to `Configuration Audit` module (in SummaryAudit table) when it is executed from module `4. Profiles Audit` module.
+    - Added new checks to `ConfigurationAuudit` module to include:
+      - NR nodes with the old N77 SSB and the new SSB pointing to some mcpcPCellNrFreqRelProfileRef (from NRFreqRelation table)
+      - NR nodes with the old N77 SSB and the new SSB pointing to clone mcpcPCellNrFreqRelProfileRef (from NRFreqRelation table)
+    - Added new checks to `ProfilesAuudit` module to include:
+      - NR nodes with the new N77 SSB and NRCellCU Ref parameters to Profiles with the old SSB name (from NRCellCU table)
+      - NR nodes with the new N77 SSB and EUtranFreqRelation Ref parameters to Profiles with the old SSB name (from EUtranFreqRelation table)
+      - NR nodes with the old N77 SSB and the new SSB pointing to some mcpcPCellNrFreqRelProfileRef (from NRFreqRelation table)
+      - NR nodes with the old N77 SSB and the new SSB pointing to clone mcpcPCellNrFreqRelProfileRef (from NRFreqRelation table)
 
   - #### 🚀 Enhancements:
 
